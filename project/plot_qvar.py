@@ -391,6 +391,24 @@ class RealtimeQvarPlotter:
         self.last_event_str = "None"
         self.last_event_time = 0
 
+        # Monotonic Y-axis zoom-out tracking (scale can only get bigger / expand)
+        self.persistent_y_min = -1500.0
+        self.persistent_y_max = 1500.0
+
+        # Connect keypress to allow manual re-fitting via 'r' key
+        self.fig.canvas.mpl_connect("key_press_event", self.on_key_press)
+
+    def on_key_press(self, event):
+        """Allow user to reset the persistent zoom bounds by pressing 'r'."""
+        if event.key in ("r", "R"):
+            valid_vals = [v for v in self.q1_ys if not math.isnan(v)]
+            if self.q2_ys:
+                valid_vals.extend([v for v in self.q2_ys if not math.isnan(v)])
+            if valid_vals:
+                self.persistent_y_min = float(min(valid_vals))
+                self.persistent_y_max = float(max(valid_vals))
+                print(f"[*] Y-axis zoom envelope reset to [{self.persistent_y_min:.0f}, {self.persistent_y_max:.0f}]")
+
     def update(self, frame):
         # Pull latest samples safely
         with self.receiver.lock:
@@ -452,18 +470,27 @@ class RealtimeQvarPlotter:
         # Adjust axes
         self.ax.set_xlim(min_x, max(max_x, min_x + 10))
 
-        # Dynamic auto-scaling with padding
+        # Monotonic Y-axis auto-expansion (the graph scale can only get bigger / zoom out)
         valid_vals = [v for v in self.q1_ys if not math.isnan(v)]
         if self.q2_ys:
             valid_vals.extend([v for v in self.q2_ys if not math.isnan(v)])
         if base is not None:
             valid_vals.append(base)
+        if press_th is not None and base is not None:
+            valid_vals.append(base + press_th if press_th < 2000 else press_th)
+        if rel_th is not None and base is not None:
+            valid_vals.append(base + rel_th if rel_th < 2000 else rel_th)
 
         if valid_vals:
-            y_min = min(valid_vals)
-            y_max = max(valid_vals)
-            pad = max(50, (y_max - y_min) * 0.2)
-            self.ax.set_ylim(y_min - pad, y_max + pad)
+            win_min = min(valid_vals)
+            win_max = max(valid_vals)
+            # Only expand limits (zoom out), never shrink
+            self.persistent_y_min = min(self.persistent_y_min, float(win_min))
+            self.persistent_y_max = max(self.persistent_y_max, float(win_max))
+
+            span = self.persistent_y_max - self.persistent_y_min
+            pad = max(100.0, span * 0.1)
+            self.ax.set_ylim(self.persistent_y_min - pad, self.persistent_y_max + pad)
 
         # Format info HUD text (using ST AN5755 Section 4.3 Gain: 78 LSB/mV)
         if self.q1_ys and not math.isnan(self.q1_ys[-1]):

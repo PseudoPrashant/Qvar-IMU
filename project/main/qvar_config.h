@@ -125,24 +125,24 @@ typedef struct {
     .rawLogEnable = 1u,                                    \
     .qvarConfig = QVAR_CONFIG_BUTTON_Q1_ONLY,              \
     .readPeriodMs = 20u,                                   \
-    .startupSettleMs = 5000u,                              \
-    .baselineSamples = 40u,                                \
-    .baselineTrackDiv = 32L,                               \
+    .startupSettleMs = 1000u,                              \
+    .baselineSamples = 30u,                                \
+    .baselineTrackDiv = 8L,                                \
     .wearAvgSamples = 10u,                                 \
-    .buttonEventCooldownMs = 700u,                         \
-    .buttonIdleRearmMs = 300u,                             \
+    .buttonEventCooldownMs = 120u,                         \
+    .buttonIdleRearmMs = 100u,                             \
     .wearButtonArmDelayMs = 0u,                            \
     .qvar2WearThresholdRaw = 700L,                         \
     .qvar2WearReleaseRaw = 250L,                           \
     .qvar2WearOnConfirmMs = 500u,                          \
     .qvar2WearOffConfirmMs = 1500u,                        \
-    .qvar1ButtonThresholdRaw = 600L,                       \
-    .qvar1ButtonReleaseRaw = 250L,                         \
-    .qvar1ButtonMinPeakRaw = 800L,                         \
-    .qvar1ButtonMaxPressMs = 400u,                         \
-    .qvar1ButtonHoldTimeMs = 1200u,                        \
+    .qvar1ButtonThresholdRaw = 2000L,                      \
+    .qvar1ButtonReleaseRaw = 1000L,                        \
+    .qvar1ButtonMinPeakRaw = 2500L,                        \
+    .qvar1ButtonMaxPressMs = 600u,                         \
+    .qvar1ButtonHoldTimeMs = 800u,                         \
     .qvar1ButtonTouchConfirmSamples = 2u,                  \
-    .qvar1ButtonReleaseConfirmSamples = 2u                 \
+    .qvar1ButtonReleaseConfirmSamples = 1u                 \
 }
 
 /* QVAR2 wear only; QVAR1 button disabled. */

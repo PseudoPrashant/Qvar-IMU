@@ -44,6 +44,7 @@ typedef struct
     uint8_t release_confirm_count;
     int32_t baseline_accum;
     int16_t baseline;
+    int16_t pre_touch_baseline;
     int32_t peak_delta;
     uint32_t active_start_ms;
     uint32_t last_event_ms;
@@ -61,6 +62,7 @@ static uint32_t sImuAppQvarStartMs;
 static uint32_t sImuAppQvarLastReadMs;
 static imu_app_qvar_button_channel_t sImuAppQvarButtonQ1;
 static imu_app_qvar_wear_channel_t sImuAppQvarWearQ2;
+static uint32_t sLastBaselineHeartbeatMs;
 
 /* Validate the public QVAR impedance enum before writing CTRL7. */
 static uint8_t imu_qvar_is_zin_valid(imu_qvar_zin_t zin)
@@ -477,8 +479,8 @@ HAL_StatusTypeDef imu_qvar_print_raw(void)
     return HAL_OK;
 }
 
-/* Circular 7-sample moving average FIR filter to cancel 50 Hz power line hum per ST AN5755 Section 5.1.6 */
-#define QVAR_MA_FILTER_WINDOW 7u
+/* Circular 10-sample moving average FIR filter to cancel 5.0 Hz aliased power line hum (200 ms period at 50 Hz sampling) per ST AN5755 Section 5.1.6 */
+#define QVAR_MA_FILTER_WINDOW 10u
 
 typedef struct {
     int16_t buffer[QVAR_MA_FILTER_WINDOW];
@@ -570,6 +572,7 @@ static void imu_app_qvar_button_reset(imu_app_qvar_button_channel_t *channel)
     channel->release_confirm_count = 0u;
     channel->baseline_accum = 0;
     channel->baseline = 0;
+    channel->pre_touch_baseline = 0;
     channel->peak_delta = 0;
     channel->active_start_ms = 0u;
     channel->last_event_ms = 0u;
@@ -767,36 +770,20 @@ static void imu_app_qvar_button_process_q1(imu_app_qvar_button_channel_t *channe
         return;
     }
 
-    delta = imu_app_qvar_abs_delta(value, channel->baseline);
-
     if (channel->active == 0u)
     {
-        if (delta <= sQvarAppConfig.qvar1ButtonReleaseRaw)
+        /* When idle and cooldown elapsed, track baseline dynamically to absorb HPF rebound & drift */
+        if ((now_ms - channel->last_event_ms) >= sQvarAppConfig.buttonEventCooldownMs)
         {
             channel->baseline = imu_app_qvar_track_baseline(channel->baseline, value);
+        }
+
+        /* Negative touch plunge: delta is how far below baseline the signal has dropped */
+        delta = (int32_t)channel->baseline - (int32_t)value;
+
+        if ((now_ms - channel->last_event_ms) < sQvarAppConfig.buttonEventCooldownMs)
+        {
             channel->touch_confirm_count = 0u;
-
-            if (channel->armed == 0u)
-            {
-                if (channel->idle_start_ms == 0u)
-                {
-                    channel->idle_start_ms = now_ms;
-                }
-                if (((now_ms - channel->idle_start_ms) >= sQvarAppConfig.buttonIdleRearmMs) &&
-                    ((now_ms - channel->last_event_ms) >= sQvarAppConfig.buttonEventCooldownMs))
-                {
-                    channel->armed = 1u;
-                }
-            }
-        }
-        else
-        {
-            channel->idle_start_ms = 0u;
-        }
-
-        if ((channel->armed == 0u) ||
-            ((now_ms - channel->last_event_ms) < sQvarAppConfig.buttonEventCooldownMs))
-        {
             return;
         }
 
@@ -811,6 +798,7 @@ static void imu_app_qvar_button_process_q1(imu_app_qvar_button_channel_t *channe
                 channel->active = 1u;
                 channel->hold_reported = 0u;
                 channel->release_confirm_count = 0u;
+                channel->pre_touch_baseline = channel->baseline;
                 channel->active_start_ms = now_ms -
                     ((uint32_t)(touchSamples - 1u) *
                      sQvarAppConfig.readPeriodMs);
@@ -824,6 +812,8 @@ static void imu_app_qvar_button_process_q1(imu_app_qvar_button_channel_t *channe
         return;
     }
 
+    /* Active touch: measure delta relative to frozen pre-touch baseline */
+    delta = (int32_t)channel->pre_touch_baseline - (int32_t)value;
     if (delta > channel->peak_delta)
     {
         channel->peak_delta = delta;
@@ -838,7 +828,9 @@ static void imu_app_qvar_button_process_q1(imu_app_qvar_button_channel_t *channe
         printf("[IMU QVAR] Q1 BUTTON HOLD\r\n");
     }
 
-    if (delta <= sQvarAppConfig.qvar1ButtonReleaseRaw)
+    /* Release condition: signal returned within releaseRaw of pre-touch baseline OR dropped below 25% of peak */
+    if ((delta <= sQvarAppConfig.qvar1ButtonReleaseRaw) ||
+        ((channel->peak_delta > 0) && (delta <= (channel->peak_delta / 4L))))
     {
         if (channel->release_confirm_count < releaseSamples)
         {
@@ -855,23 +847,23 @@ static void imu_app_qvar_button_process_q1(imu_app_qvar_button_channel_t *channe
         channel->active = 0u;
         channel->touch_confirm_count = 0u;
         channel->release_confirm_count = 0u;
+        channel->last_event_ms = now_ms;
+        /* Immediately re-anchor baseline to post-release level to avoid rebound latch-up */
+        channel->baseline = value;
 
         if (channel->hold_reported != 0u)
         {
             printf("[IMU QVAR] Q1 BUTTON HOLD RELEASE\r\n");
-            channel->last_event_ms = now_ms;
-            channel->armed = 0u;
-            channel->idle_start_ms = 0u;
             return;
         }
 
         if ((duration_ms <= sQvarAppConfig.qvar1ButtonMaxPressMs) &&
             (channel->peak_delta >= sQvarAppConfig.qvar1ButtonMinPeakRaw))
         {
-            printf("[IMU QVAR] Q1 BUTTON SINGLE\r\n");
-            channel->last_event_ms = now_ms;
-            channel->armed = 0u;
-            channel->idle_start_ms = 0u;
+            printf("[IMU QVAR] Q1 BUTTON SINGLE (peak=%ld LSB / %.1f mV, dur=%lu ms)\r\n",
+                   (long)channel->peak_delta,
+                   (float)channel->peak_delta / 78.0f,
+                   (unsigned long)duration_ms);
         }
     }
 }
@@ -937,6 +929,19 @@ static void imu_app_qvar_process_sample(const imu_qvar_raw_t *raw, uint32_t now_
         printf("[IMU QVAR] detection ready: Q1 button=%u Q2 wear=%u\r\n",
                (unsigned)buttonEnabled,
                (unsigned)wearEnabled);
+    }
+
+    if ((buttonEnabled != 0u) && (sImuAppQvarButtonQ1.baseline_ready != 0u))
+    {
+        if ((now_ms - sLastBaselineHeartbeatMs) >= 5000u)
+        {
+            sLastBaselineHeartbeatMs = now_ms;
+            printf("[IMU QVAR] Q1 button baseline=%d press_th=%ld release=%ld peak=%ld\r\n",
+                   (int)sImuAppQvarButtonQ1.baseline,
+                   (long)sQvarAppConfig.qvar1ButtonThresholdRaw,
+                   (long)sQvarAppConfig.qvar1ButtonReleaseRaw,
+                   (long)sQvarAppConfig.qvar1ButtonMinPeakRaw);
+        }
     }
 }
 
