@@ -6,6 +6,7 @@ This directory contains the ESP32 / FreeRTOS port of the ISM330BX IMU driver and
 
 - `CMakeLists.txt`: ESP-IDF root project definition.
 - `plot_qvar.py`: Python real-time GUI visualizer and logger for COM serial telemetry.
+- `qvar_keyboard.py`: Standalone Python script that maps each detected electrode peak to a native Windows keyboard press (Spacebar by default).
 - `main/`: ESP-IDF component containing:
   - `main.c`: Application entry point (`app_main`), initializes I2C master (`GPIO 21/22`) and runs the QVAR polling loop.
   - `imu.c`: Low-level IMU driver over I2C (`i2c_master_write_to_device` / `i2c_master_write_read_device`).
@@ -112,6 +113,31 @@ Stored in `project/data/` with the following columns:
 | `q2_valid` | 1 if valid, 0 if disabled/NA |
 | `q1_baseline` | Active learned baseline for Q1 |
 | `q2_baseline` | Active learned baseline for Q2 |
-| `event` | Triggered event label (`Q1 BUTTON SINGLE`, `HOLD`, etc.) |
+| `event` | Triggered event label (`Q1 PEAK`, `Q1 BUTTON SINGLE`, `HOLD`, etc.) |
 
+---
 
+## Real-Time Keyboard Controller (`qvar_keyboard.py`)
+
+A standalone host-side Python controller that listens to the QVAR telemetry stream over serial (`COM7`) and triggers native Windows keystrokes (Spacebar by default) on every detected electrode peak.
+
+### Quick Start
+```powershell
+# Default: Spacebar on COM7
+python qvar_keyboard.py
+
+# Custom Key (e.g. Enter, Up, Down)
+python qvar_keyboard.py --key enter
+python qvar_keyboard.py --key up
+
+# Specify COM port
+python qvar_keyboard.py --port COM7
+```
+
+### Supported Keys
+`space` (default), `enter`, `up`, `down`, `left`, `right`, `tab`, `escape`
+
+### Example Uses
+- 🦖 **Chrome Dino Game**: Open `chrome://dino` in your browser and tap your electrode to jump!
+- ⏯️ **Media Control**: Tap to pause/play YouTube or Spotify.
+- 📑 **Slide Presentations**: Tap to advance slides in PowerPoint / PDF presentation mode.
