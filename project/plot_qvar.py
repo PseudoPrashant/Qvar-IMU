@@ -364,7 +364,7 @@ class RealtimeQvarPlotter:
         # Labels & title
         self.ax.set_title("ISM330BX QVAR Real-Time Telemetry", fontsize=14, fontweight="bold", color="#f0f3f8", pad=12)
         self.ax.set_xlabel("Sample Index", fontsize=10, color="#b0bec5")
-        self.ax.set_ylabel("Raw QVAR ADC Value", fontsize=10, color="#b0bec5")
+        self.ax.set_ylabel("QVAR Amplitude (LSB) [78 LSB = 1 mV]", fontsize=10, color="#b0bec5")
         self.ax.tick_params(colors="#90a4ae")
 
         # Legend
@@ -465,13 +465,24 @@ class RealtimeQvarPlotter:
             pad = max(50, (y_max - y_min) * 0.2)
             self.ax.set_ylim(y_min - pad, y_max + pad)
 
-        # Format info HUD text
-        latest_q1 = f"{self.q1_ys[-1]:.0f}" if self.q1_ys and not math.isnan(self.q1_ys[-1]) else "N/A"
-        latest_base = f"{base}" if base is not None else "Learning..."
+        # Format info HUD text (using ST AN5755 Section 4.3 Gain: 78 LSB/mV)
+        if self.q1_ys and not math.isnan(self.q1_ys[-1]):
+            latest_lsb = self.q1_ys[-1]
+            latest_mv = latest_lsb / 78.0
+            latest_q1_str = f"{latest_lsb:.0f} LSB ({latest_mv:.1f} mV)"
+        else:
+            latest_q1_str = "N/A"
+
+        if base is not None:
+            base_mv = base / 78.0
+            latest_base_str = f"{base} LSB ({base_mv:.1f} mV)"
+        else:
+            latest_base_str = "Learning..."
+
         status_color = "#81c784" if connected else "#e57373"
         self.info_text.set_color(status_color)
         self.info_text.set_text(
-            f"[{status}] | Sample: #{max_x} | Latest Q1: {latest_q1} | Baseline: {latest_base}"
+            f"[{status}] | #{max_x} | Q1: {latest_q1_str} | Base: {latest_base_str}"
         )
 
         # Event HUD
