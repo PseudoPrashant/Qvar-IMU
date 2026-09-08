@@ -557,8 +557,8 @@ def parse_args():
         "-w",
         "--window",
         type=int,
-        default=250,
-        help="Number of samples in the rolling window (default: 250).",
+        default=350,
+        help="Number of samples in the rolling window (default: 350 for 100 Hz).",
     )
     parser.add_argument(
         "-r",

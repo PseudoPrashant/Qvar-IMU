@@ -29,17 +29,17 @@ The polling logic in `qvar.c` replaces STM32 HAL timing functions with FreeRTOS 
   - Configured to `IMU_QVAR_ZIN_235_MOHM` ($235\text{ M}\Omega$) in `QVAR_CONFIG_BUTTON_Q1_ONLY` ([qvar.h](file:///c:/Users/prash/OneDrive/Desktop/IMU/IMU/project/main/qvar.h)) per ST AN5755 Section 5.3.1 (Page 19, line 54: `CTRL7 = 0xB0`), attenuating radiated airborne electric field noise by an additional $\approx 22\%$ over $300\text{ M}\Omega$.
 - **Hardware High-Pass Filter (HPF)**:
   - Enabled `.hpfEnable = 1u` in `QVAR_CONFIG_BUTTON_Q1_ONLY` ([qvar.h](file:///c:/Users/prash/OneDrive/Desktop/IMU/IMU/project/main/qvar.h)) per ST AN5755 Section 5.1.4 to eliminate floating-electrode DC static charge accumulation and recenter the baseline around $0\text{ LSB}$.
-- **10-Sample Moving Average FIR Comb Filter**:
-  - Implemented circular 10-sample rolling average ($200\text{ ms}$ window at 50 Hz) in `qvar.c` per ST AN5755 Section 5.1.6 to notch out 5.0 Hz aliased power line hum, dropping quiet idle RMS noise to $48.9\text{ LSB}$ ($0.63\text{ mV}$) and reducing 95%–5% spread by $>52\%$.
-- **Deterministic 20 ms Polling Loop**:
-  - Implemented non-drifting periodic task pacing via `vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(20))` in [main.c](file:///c:/Users/prash/OneDrive/Desktop/IMU/IMU/project/main/main.c), eliminating FreeRTOS scheduling jitter and phase slip.
+- **10-Sample Moving Average FIR Comb Filter (50 Hz Notch)**:
+  - Circular 10-sample rolling average ($100\text{ ms}$ window at 100 Hz) in `qvar.c` per ST AN5755 Section 5.1.6. Places an exact mathematical null notch at $50\text{ Hz}$ mains hum while slashing group delay by $50\%$ down to just $45\text{ ms}$.
+- **Deterministic 10 ms (100 Hz) Polling Loop**:
+  - Implemented non-drifting periodic task pacing via `vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(10))` in [main.c](file:///c:/Users/prash/OneDrive/Desktop/IMU/IMU/project/main/main.c), doubling data throughput and temporal resolution over 50 Hz.
 - **Optimized Event Detection (Adaptive Baseline & Dual-Release Architecture)**:
-  - Configured `qvar_config.h` and `qvar.c` for human electrostatic touch dynamics (negative plunge peaks of $-8,000\text{ to }-28,000\text{ LSB}$):
-    - `startupSettleMs = 1000 ms`, `baselineSamples = 30` ($600\text{ ms}$): Sensor ready for interaction in just $1.6\text{ seconds}$ from boot.
+  - Configured `qvar_config.h` and `qvar.c` for human electrostatic touch dynamics at 100 Hz:
+    - `startupSettleMs = 1000 ms`, `baselineSamples = 50` ($500\text{ ms}$): Sensor ready for interaction in just $1.5\text{ seconds}$ from boot.
     - `press_th = 2000 LSB`, `min_peak = 2500 LSB`: Enhanced sensitivity for light touches while remaining $>40\sigma$ above idle noise floor ($48.9\text{ LSB}$) with $0$ false triggers across $>10,000$ idle samples.
     - `release = 1000 LSB` with **Dual-Release Condition**: Triggered when either `delta <= 1000 LSB` OR `delta <= peak_delta / 4`. Guarantees instantaneous release recognition even under repetitive high-frequency tap charging.
     - **Adaptive Baseline Tracking & Instant Re-anchoring**: Baseline tracks dynamically in idle state (`baselineTrackDiv = 8L`, $\alpha = 0.125$), freezes at `pre_touch_baseline` upon touch confirmation to maintain accurate peak measurement, and immediately re-anchors to `value` upon release to prevent HPF rebound lock-out.
-    - Timing parameters: `touchConfirmSamples = 2` ($40\text{ ms}$), `releaseConfirmSamples = 1` ($20\text{ ms}$, cuts perceptual release lag by 50%), `max_press = 600 ms`, `hold_time = 800 ms`, `cooldown = 120 ms`, `rearm = 100 ms` (supports up to 5 taps/sec).
+    - Timing parameters: `touchConfirmSamples = 3` ($30\text{ ms}$), `releaseConfirmSamples = 2` ($20\text{ ms}$), `max_press = 600 ms`, `hold_time = 800 ms`, `cooldown = 120 ms`, `rearm = 100 ms` (supports up to 5 taps/sec).
     - **Rich Serial Diagnostics**: Emits `[IMU QVAR] Q1 BUTTON SINGLE (peak=%ld LSB / %.1f mV, dur=%lu ms)`.
     - **Session Validated**: Verified with $10/10$ ($100\%$) single taps detected on `data/test1.csv` and `data/taps.csv`, and $0$ false triggers on `data/noise after all changes.csv`.
 - **Periodic Baseline Heartbeat**:
