@@ -104,7 +104,7 @@ typedef struct {
     .hpfEnable = 0u,                                   \
     .lpfEnable = 1u,                                   \
     .dataReadyInterruptEnable = 0u,                    \
-    .zin = IMU_QVAR_ZIN_2400_MOHM,                    \
+    .zin = IMU_QVAR_ZIN_730_MOHM,                     \
     .settlingMs = IMU_QVAR_DEFAULT_SETTLING_MS         \
 }
 

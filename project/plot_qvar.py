@@ -3,25 +3,29 @@
 ===============================================================================
 ISM330BX QVAR Real-Time Serial Plotter
 ===============================================================================
-Reads serial telemetry output from ESP32 / FreeRTOS ISM330BX firmware and
+Reads serial telemetry output from ESP32 / FreeRTOS ISM330BX firmware,
 renders a real-time rolling waveform with threshold guides, baseline tracking,
-and touch / wear event detection HUD.
+and touch / wear event detection HUD, and automatically archives plotted data
+to CSV files in the project's 'data' directory.
 
 Usage:
-  python plot_qvar.py --port COM7
-  python plot_qvar.py --port COM7 --baud 115200 --window 250
-  python plot_qvar.py --mock                # Offline synthetic test mode
-  python plot_qvar.py --port COM7 --record qvar_log.csv
+  python plot_qvar.py                               # Auto-logs to project/data/
+  python plot_qvar.py --port COM7 --window 250
+  python plot_qvar.py --mock                        # Offline synthetic test mode
+  python plot_qvar.py --record custom_output.csv    # Custom output file
+  python plot_qvar.py --no-record                   # Disable CSV saving
 ===============================================================================
 """
 
 import argparse
 import collections
 import csv
+from datetime import datetime
 import math
 import os
 import random
 import re
+import signal
 import sys
 import threading
 import time
@@ -37,6 +41,10 @@ import matplotlib
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+
+# Default storage directory
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 
 # -----------------------------------------------------------------------------
 # Telemetry Regex Patterns
@@ -73,11 +81,12 @@ RE_EVENT = re.compile(
 class TelemetryReceiver:
     """Handles serial ingestion or synthetic mock generation in a background thread."""
 
-    def __init__(self, port, baud, is_mock=False, csv_writer=None, verbose=False):
+    def __init__(self, port, baud, is_mock=False, csv_writer=None, csv_file=None, verbose=False):
         self.port = port
         self.baud = baud
         self.is_mock = is_mock
         self.csv_writer = csv_writer
+        self.csv_file = csv_file
         self.verbose = verbose
 
         self.running = False
@@ -87,6 +96,7 @@ class TelemetryReceiver:
         # Data buffers: stores (timestamp, sample_idx, q1, q1_valid, q2, q2_valid)
         self.samples = collections.deque()
         self.events = collections.deque()  # (timestamp, sample_idx, event_name, value)
+        self.pending_event = ""
 
         # Firmware states
         self.q1_baseline = None
@@ -181,7 +191,26 @@ class TelemetryReceiver:
                 self.samples.append(item)
 
                 if self.csv_writer:
-                    self.csv_writer.writerow([now, idx, q1_val, int(q1_valid), q2_val, int(q2_valid)])
+                    iso_time = datetime.fromtimestamp(now).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
+                    q1_base = self.q1_baseline if self.q1_baseline is not None else ""
+                    q2_base = self.q2_baseline if self.q2_baseline is not None else ""
+                    evt_str = self.pending_event
+                    self.pending_event = ""  # Consume attached event
+
+                    self.csv_writer.writerow([
+                        iso_time,
+                        f"{now:.4f}",
+                        idx,
+                        q1_val,
+                        int(q1_valid),
+                        q2_val,
+                        int(q2_valid),
+                        q1_base,
+                        q2_base,
+                        evt_str,
+                    ])
+                    if self.csv_file:
+                        self.csv_file.flush()
 
             return
 
@@ -212,9 +241,9 @@ class TelemetryReceiver:
         if m_evt:
             evt_text = m_evt.group(1)
             with self.lock:
-                # Associate event with current sample idx and latest value
                 latest_val = self.samples[-1][2] if self.samples else 0
                 self.events.append((now, self.sample_counter, evt_text, latest_val))
+                self.pending_event = evt_text
             print(f"*** EVENT TRIGGERED: {evt_text} ***")
             return
 
@@ -244,12 +273,13 @@ class TelemetryReceiver:
             start_t = time.time()
             t += 0.025
 
-            # Base signal with slight 50Hz/environmental wobble and random noise
+            # Base signal with slight environmental wobble and random noise
             noise = random.gauss(0, 15)
             drift = 50 * math.sin(2 * math.pi * 0.1 * t)
             q1 = q1_base + drift + noise
             q2 = 800 + noise * 0.5
 
+            mock_evt = ""
             # Random touch simulation
             if not btn_active and random.random() < 0.015:
                 btn_active = True
@@ -260,17 +290,32 @@ class TelemetryReceiver:
                 q1 += 1400  # Jump during touch
                 if btn_hold_counter <= 0:
                     btn_active = False
+                    mock_evt = "Q1 BUTTON SINGLE" if random.random() > 0.3 else "Q1 BUTTON HOLD RELEASE"
                     with self.lock:
-                        evt_name = "Q1 BUTTON SINGLE" if random.random() > 0.3 else "Q1 BUTTON HOLD RELEASE"
-                        self.events.append((start_t, self.sample_counter, evt_name, q1))
-                    print(f"*** MOCK EVENT: {evt_name} ***")
+                        self.events.append((start_t, self.sample_counter, mock_evt, q1))
+                    print(f"*** MOCK EVENT: {mock_evt} ***")
 
             with self.lock:
                 self.sample_counter += 1
                 item = (start_t, self.sample_counter, int(q1), True, int(q2), False)
                 self.samples.append(item)
+
                 if self.csv_writer:
-                    self.csv_writer.writerow([start_t, self.sample_counter, int(q1), 1, int(q2), 0])
+                    iso_time = datetime.fromtimestamp(start_t).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
+                    self.csv_writer.writerow([
+                        iso_time,
+                        f"{start_t:.4f}",
+                        self.sample_counter,
+                        int(q1),
+                        1,
+                        int(q2),
+                        0,
+                        self.q1_baseline,
+                        self.q2_baseline,
+                        mock_evt,
+                    ])
+                    if self.csv_file:
+                        self.csv_file.flush()
 
             elapsed = time.time() - start_t
             sleep_time = max(0.001, 0.025 - elapsed)
@@ -384,7 +429,6 @@ class RealtimeQvarPlotter:
             self.hl_baseline.set_alpha(0.85)
 
             if press_th is not None:
-                # Thresholds can be absolute or relative depending on driver config
                 th_val = base + press_th if press_th < 2000 else press_th
                 self.hl_press_th.set_ydata([th_val, th_val])
                 self.hl_press_th.set_alpha(0.75)
@@ -458,12 +502,12 @@ class RealtimeQvarPlotter:
             plt.tight_layout(rect=[0, 0.05, 1, 0.98])
             plt.show()
         except KeyboardInterrupt:
-            pass
+            plt.close(self.fig)
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Real-time graphical visualizer for ISM330BX QVAR serial telemetry."
+        description="Real-time graphical visualizer for ISM330BX QVAR serial telemetry with auto-CSV archiving."
     )
     parser.add_argument(
         "-p", "--port", default="COM7", help="Serial COM port (default: COM7)."
@@ -483,7 +527,18 @@ def parse_args():
         "--record",
         type=str,
         default=None,
-        help="Optional CSV file path to record incoming raw telemetry.",
+        help="Custom CSV file path. If omitted, files are automatically saved to project/data/.",
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=str,
+        default=DEFAULT_DATA_DIR,
+        help=f"Target directory for automatic CSV records (default: {DEFAULT_DATA_DIR}).",
+    )
+    parser.add_argument(
+        "--no-record",
+        action="store_true",
+        help="Disable automatic CSV recording.",
     )
     parser.add_argument(
         "--mock",
@@ -502,15 +557,46 @@ def parse_args():
 def main():
     args = parse_args()
 
+    # Clean signal handling for Ctrl+C
+    def _sigint_handler(signum, frame):
+        print("\n[*] Ctrl+C received, closing plotter...")
+        plt.close("all")
+
+    try:
+        signal.signal(signal.SIGINT, _sigint_handler)
+    except (ValueError, AttributeError):
+        pass
+
     csv_file = None
     csv_writer = None
-    if args.record:
-        print(f"[*] Logging raw data to {args.record}...")
-        csv_file = open(args.record, mode="w", newline="", encoding="utf-8")
+    resolved_csv_path = None
+
+    if not args.no_record:
+        if args.record:
+            resolved_csv_path = args.record
+        else:
+            os.makedirs(args.data_dir, exist_ok=True)
+            timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+            resolved_csv_path = os.path.join(args.data_dir, f"qvar_telemetry_{timestamp_str}.csv")
+
+        print(f"[*] Archiving QVAR telemetry to: {resolved_csv_path}")
+        parent_dir = os.path.dirname(os.path.abspath(resolved_csv_path))
+        os.makedirs(parent_dir, exist_ok=True)
+        csv_file = open(resolved_csv_path, mode="w", newline="", encoding="utf-8")
         csv_writer = csv.writer(csv_file)
-        csv_writer.writerow(
-            ["timestamp", "sample_index", "q1", "q1_valid", "q2", "q2_valid"]
-        )
+        csv_writer.writerow([
+            "iso_time",
+            "epoch_seconds",
+            "sample_index",
+            "q1_raw",
+            "q1_valid",
+            "q2_raw",
+            "q2_valid",
+            "q1_baseline",
+            "q2_baseline",
+            "event",
+        ])
+        csv_file.flush()
 
     # Detect available ports if not in mock mode
     if not args.mock and serial is not None:
@@ -524,6 +610,7 @@ def main():
         baud=args.baud,
         is_mock=args.mock,
         csv_writer=csv_writer,
+        csv_file=csv_file,
         verbose=args.verbose,
     )
 
@@ -536,8 +623,9 @@ def main():
         print("\n[*] Shutting down serial receiver...")
         receiver.stop()
         if csv_file:
+            csv_file.flush()
             csv_file.close()
-            print(f"[+] Recording saved to {args.record}.")
+            print(f"[+] Recording saved to: {resolved_csv_path}")
         print("[+] Done.")
 
 
