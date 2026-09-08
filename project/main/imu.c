@@ -7,7 +7,7 @@
 #include <stdio.h>
 
 #define I2C_MASTER_NUM I2C_NUM_0
-#define ISM330BX_I2C_ADDR 0x6A
+#define ISM330BX_I2C_ADDR 0x6B
 
 static stmdev_ctx_t sImuCtx;
 static uint8_t sStarted = 0;
@@ -68,7 +68,17 @@ int imu_internal_qvar_power_down_motion(void) {
 }
 
 void imu_internal_qvar_restore_motion_if_needed(void) {
-    // Restore logic if you intend to use the accelerometer later
+    // The ISM330BX strictly requires the accelerometer to be in 
+    // High-Performance mode for the Qvar channel to function.
+    
+    // 1. Set Accelerometer full scale to 2g
+    ism330bx_xl_full_scale_set(&sImuCtx, ISM330BX_2g);
+    
+    // 2. Set Accelerometer to High-Performance mode
+    ism330bx_xl_mode_set(&sImuCtx, ISM330BX_XL_HIGH_PERFORMANCE_MD);
+    
+    // 3. Turn on the Accelerometer at 120Hz
+    ism330bx_xl_data_rate_set(&sImuCtx, ISM330BX_XL_ODR_AT_120Hz);
 }
 
 static uint8_t sInt2Pending = 0;

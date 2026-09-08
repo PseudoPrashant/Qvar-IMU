@@ -5,6 +5,7 @@ This directory contains the ESP32 / FreeRTOS port of the ISM330BX IMU driver and
 ## Directory Structure
 
 - `CMakeLists.txt`: ESP-IDF root project definition.
+- `plot_qvar.py`: Python real-time GUI visualizer and logger for COM serial telemetry.
 - `main/`: ESP-IDF component containing:
   - `main.c`: Application entry point (`app_main`), initializes I2C master (`GPIO 21/22`) and runs the QVAR polling loop.
   - `imu.c`: Low-level IMU driver over I2C (`i2c_master_write_to_device` / `i2c_master_write_read_device`).
@@ -24,3 +25,37 @@ The polling logic in `qvar.c` replaces STM32 HAL timing functions with FreeRTOS 
   ```c
   #define QVAR_APP_ACTIVE_CONFIG QVAR_APP_CONFIG_BUTTON_Q1_ONLY
   ```
+
+## Real-Time Telemetry & Plotting (`plot_qvar.py`)
+
+A real-time Python graphical monitor is provided to visualize the QVAR electrode data streaming over serial:
+
+### Features
+- **Rolling Waveform**: Real-time plot of Q1 (Button) and Q2 (Wear) electrode channels.
+- **Dynamic Baseline & Thresholds**: Automatically extracts and draws horizontal guides for baseline learning, press thresholds, and release thresholds.
+- **Event Detection HUD**: Real-time visual markers for button taps (`SINGLE`), hold events (`HOLD`), and wear sensing.
+- **CSV Data Recording**: Optional recording of raw samples with timestamps.
+- **Offline Mock Simulation**: Built-in mock generator (`--mock`) for testing without hardware connected.
+
+### Requirements
+Ensure dependencies are installed:
+```powershell
+pip install pyserial matplotlib numpy
+```
+
+### Running the Plotter
+> **Important**: On Windows, serial COM ports cannot be shared across multiple programs. If `idf.py monitor` is running, exit it first (`Ctrl + ]`) before running the plotter.
+
+1. **Connect to COM7 (default)**:
+   ```powershell
+   python plot_qvar.py --port COM7
+   ```
+2. **Custom Window Size & Logging**:
+   ```powershell
+   python plot_qvar.py --port COM7 --window 300 --record qvar_log.csv
+   ```
+3. **Offline Mock Simulation Mode**:
+   ```powershell
+   python plot_qvar.py --mock
+   ```
+

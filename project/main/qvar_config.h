@@ -58,9 +58,9 @@ typedef struct {
     .qvar2WearReleaseRaw = 250L,                           \
     .qvar2WearOnConfirmMs = 500u,                          \
     .qvar2WearOffConfirmMs = 1500u,                        \
-    .qvar1ButtonThresholdRaw = 900L,                       \
-    .qvar1ButtonReleaseRaw = 350L,                         \
-    .qvar1ButtonMinPeakRaw = 1300L,                        \
+    .qvar1ButtonThresholdRaw = 18000L,                     \
+    .qvar1ButtonReleaseRaw = 9000L,                        \
+    .qvar1ButtonMinPeakRaw = 25000L,                       \
     .qvar1ButtonMaxPressMs = 400u,                         \
     .qvar1ButtonHoldTimeMs = 1200u,                        \
     .qvar1ButtonTouchConfirmSamples = 3u,                  \
