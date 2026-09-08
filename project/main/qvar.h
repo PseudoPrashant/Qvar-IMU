@@ -101,7 +101,7 @@ typedef struct {
     .enableQvar2 = 0u,                                 \
     .qvar1Use = IMU_QVAR_USE_BUTTON,                   \
     .qvar2Use = IMU_QVAR_USE_DISABLED,                 \
-    .hpfEnable = 0u,                                   \
+    .hpfEnable = 1u,                                   \
     .lpfEnable = 1u,                                   \
     .dataReadyInterruptEnable = 0u,                    \
     .zin = IMU_QVAR_ZIN_730_MOHM,                     \
