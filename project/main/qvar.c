@@ -33,26 +33,30 @@ typedef struct
     uint32_t last_change_ms;
 } imu_app_qvar_wear_channel_t;
 
+typedef enum
+{
+    IMU_APP_QVAR_PEAK_STATE_IDLE = 0,
+    IMU_APP_QVAR_PEAK_STATE_COLLECTING,
+    IMU_APP_QVAR_PEAK_STATE_HOLD
+} imu_app_qvar_peak_state_t;
+
 typedef struct
 {
     uint8_t baseline_ready;
-    uint8_t active;
     uint8_t armed;
-    uint8_t hold_reported;
     uint8_t baseline_count;
-    uint8_t touch_confirm_count;
-    uint8_t release_confirm_count;
-    uint8_t tap_count;
+    imu_app_qvar_peak_state_t state;
+    uint8_t peak_count;
     int32_t baseline_accum;
     int16_t baseline;
     int16_t pre_touch_baseline;
-    int32_t peak_delta;
-    uint32_t active_start_ms;
+    int16_t v_prev1;
+    int16_t v_prev2;
+    int16_t rebound_crest;
+    int32_t max_peak_delta;
+    uint32_t first_peak_ms;
+    uint32_t last_peak_ms;
     uint32_t last_event_ms;
-    uint32_t idle_start_ms;
-    uint32_t tap1_release_ms;
-    int32_t tap1_peak_delta;
-    uint32_t tap1_duration_ms;
 } imu_app_qvar_button_channel_t;
 
 static imu_qvar_config_t sQvarConfig;
@@ -568,23 +572,20 @@ static void imu_app_qvar_button_reset(imu_app_qvar_button_channel_t *channel)
     }
 
     channel->baseline_ready = 0u;
-    channel->active = 0u;
     channel->armed = 1u;
-    channel->hold_reported = 0u;
     channel->baseline_count = 0u;
-    channel->touch_confirm_count = 0u;
-    channel->release_confirm_count = 0u;
-    channel->tap_count = 0u;
+    channel->state = IMU_APP_QVAR_PEAK_STATE_IDLE;
+    channel->peak_count = 0u;
     channel->baseline_accum = 0;
     channel->baseline = 0;
     channel->pre_touch_baseline = 0;
-    channel->peak_delta = 0;
-    channel->active_start_ms = 0u;
+    channel->v_prev1 = 0;
+    channel->v_prev2 = 0;
+    channel->rebound_crest = 0;
+    channel->max_peak_delta = 0;
+    channel->first_peak_ms = 0u;
+    channel->last_peak_ms = 0u;
     channel->last_event_ms = 0u;
-    channel->idle_start_ms = 0u;
-    channel->tap1_release_ms = 0u;
-    channel->tap1_peak_delta = 0;
-    channel->tap1_duration_ms = 0u;
 }
 
 static int16_t imu_app_qvar_track_baseline(int16_t current_baseline, int16_t value)
@@ -735,22 +736,14 @@ static void imu_app_qvar_button_process_q1(imu_app_qvar_button_channel_t *channe
                                            uint8_t button_allowed)
 {
     int32_t delta;
-    uint32_t duration_ms;
-    uint8_t releaseSamples = sQvarAppConfig.qvar1ButtonReleaseConfirmSamples;
-    uint8_t touchSamples = sQvarAppConfig.qvar1ButtonTouchConfirmSamples;
+    int32_t delta_prev1;
+    int16_t v_curr;
+    int16_t v_p1;
+    int16_t v_p2;
 
     if ((channel == NULL) || (valid == 0u))
     {
         return;
-    }
-
-    if (touchSamples == 0u)
-    {
-        touchSamples = 1u;
-    }
-    if (releaseSamples == 0u)
-    {
-        releaseSamples = 1u;
     }
 
     if (button_allowed == 0u)
@@ -769,6 +762,8 @@ static void imu_app_qvar_button_process_q1(imu_app_qvar_button_channel_t *channe
             channel->baseline =
                 (int16_t)(channel->baseline_accum / (int32_t)channel->baseline_count);
             channel->baseline_ready = 1u;
+            channel->v_prev1 = value;
+            channel->v_prev2 = value;
             printf("[IMU QVAR] Q1 button baseline=%d press_th=%ld release=%ld peak=%ld\r\n",
                    (int)channel->baseline,
                    (long)sQvarAppConfig.qvar1ButtonThresholdRaw,
@@ -778,145 +773,143 @@ static void imu_app_qvar_button_process_q1(imu_app_qvar_button_channel_t *channe
         return;
     }
 
-    if (channel->active == 0u)
+    /* Cooldown guard: feed delay line but suppress new triggers */
+    if ((now_ms - channel->last_event_ms) < sQvarAppConfig.buttonEventCooldownMs)
     {
-        /* Check if pending single tap timer has expired */
-        if (channel->tap_count == 1u)
-        {
-            if ((now_ms - channel->tap1_release_ms) >= sQvarAppConfig.qvar1ButtonDoubleTapWindowMs)
-            {
-                channel->tap_count = 0u;
-                channel->last_event_ms = now_ms;
-                printf("[IMU QVAR] Q1 BUTTON SINGLE (peak=%ld LSB / %.1f mV, dur=%lu ms)\r\n",
-                       (long)channel->tap1_peak_delta,
-                       (float)channel->tap1_peak_delta / 78.0f,
-                       (unsigned long)channel->tap1_duration_ms);
-            }
-        }
-
-        /* When idle and cooldown elapsed, track baseline dynamically to absorb HPF rebound & drift */
-        if ((now_ms - channel->last_event_ms) >= sQvarAppConfig.buttonEventCooldownMs)
-        {
-            channel->baseline = imu_app_qvar_track_baseline(channel->baseline, value);
-        }
-
-        /* Negative touch plunge: delta is how far below baseline the signal has dropped */
-        delta = (int32_t)channel->baseline - (int32_t)value;
-
-        if ((now_ms - channel->last_event_ms) < sQvarAppConfig.buttonEventCooldownMs)
-        {
-            channel->touch_confirm_count = 0u;
-            return;
-        }
-
-        if (delta >= sQvarAppConfig.qvar1ButtonThresholdRaw)
-        {
-            if (channel->touch_confirm_count < touchSamples)
-            {
-                channel->touch_confirm_count++;
-            }
-            if (channel->touch_confirm_count >= touchSamples)
-            {
-                channel->active = 1u;
-                channel->hold_reported = 0u;
-                channel->release_confirm_count = 0u;
-                channel->pre_touch_baseline = channel->baseline;
-                channel->active_start_ms = now_ms -
-                    ((uint32_t)(touchSamples - 1u) *
-                     sQvarAppConfig.readPeriodMs);
-                channel->peak_delta = delta;
-            }
-        }
-        else
-        {
-            channel->touch_confirm_count = 0u;
-        }
+        channel->v_prev2 = channel->v_prev1;
+        channel->v_prev1 = value;
         return;
     }
 
-    /* Active touch: measure delta relative to frozen pre-touch baseline */
-    delta = (int32_t)channel->pre_touch_baseline - (int32_t)value;
-    if (delta > channel->peak_delta)
+    v_curr = value;
+    v_p1 = channel->v_prev1;
+    v_p2 = channel->v_prev2;
+
+    switch (channel->state)
     {
-        channel->peak_delta = delta;
-    }
-
-    duration_ms = now_ms - channel->active_start_ms;
-
-    if ((channel->hold_reported == 0u) &&
-        (duration_ms >= sQvarAppConfig.qvar1ButtonHoldTimeMs))
-    {
-        channel->hold_reported = 1u;
-        channel->tap_count = 0u; /* Cancel pending double-tap on hold */
-        printf("[IMU QVAR] Q1 BUTTON HOLD\r\n");
-    }
-
-    /* Release condition:
-     * 1. Signal returned within releaseRaw of pre-touch baseline (delta <= releaseRaw)
-     * 2. OR dropped below 55% of peak (recovered by at least 45% of peak excursion)
-     * 3. OR upward recovery delta from peak is >= 8000 LSB (fast double-tap trough)
-     */
-    int32_t rise_from_peak = channel->peak_delta - delta;
-    uint8_t is_released = 0u;
-
-    if ((delta <= sQvarAppConfig.qvar1ButtonReleaseRaw) ||
-        ((channel->peak_delta > 0) && (delta <= ((channel->peak_delta * 55L) / 100L))) ||
-        (rise_from_peak >= 8000L))
-    {
-        is_released = 1u;
-    }
-
-    if (is_released != 0u)
-    {
-        if (channel->release_confirm_count < releaseSamples)
+        case IMU_APP_QVAR_PEAK_STATE_IDLE:
         {
-            channel->release_confirm_count++;
-        }
-    }
-    else
-    {
-        channel->release_confirm_count = 0u;
-    }
+            /* Dynamic baseline tracking when idle */
+            channel->baseline = imu_app_qvar_track_baseline(channel->baseline, value);
+            delta_prev1 = (int32_t)channel->baseline - (int32_t)v_p1;
 
-    if (channel->release_confirm_count >= releaseSamples)
-    {
-        channel->active = 0u;
-        channel->touch_confirm_count = 0u;
-        channel->release_confirm_count = 0u;
-        channel->last_event_ms = now_ms;
-        /* Immediately re-anchor baseline to post-release level to avoid rebound latch-up */
-        channel->baseline = value;
-
-        if (channel->hold_reported != 0u)
-        {
-            channel->tap_count = 0u;
-            printf("[IMU QVAR] Q1 BUTTON HOLD RELEASE\r\n");
-            return;
-        }
-
-        if ((duration_ms <= sQvarAppConfig.qvar1ButtonMaxPressMs) &&
-            (channel->peak_delta >= sQvarAppConfig.qvar1ButtonMinPeakRaw))
-        {
-            if (channel->tap_count == 1u)
+            /* Check if v_prev1 is a plunge peak (local minimum):
+             * v_p1 <= v_p2 and v_p1 < v_curr, with plunge depth >= min_peak */
+            if ((v_p1 <= v_p2) && (v_p1 < v_curr) &&
+                (delta_prev1 >= sQvarAppConfig.qvar1ButtonMinPeakRaw))
             {
-                /* Tap 2 completed within double-tap window! */
-                uint32_t interval_ms = now_ms - channel->tap1_release_ms;
-                channel->tap_count = 0u;
-                printf("[IMU QVAR] Q1 BUTTON DOUBLE (interval=%lu ms, peak=%ld LSB / %.1f mV)\r\n",
-                       (unsigned long)interval_ms,
-                       (long)channel->peak_delta,
-                       (float)channel->peak_delta / 78.0f);
+                channel->state = IMU_APP_QVAR_PEAK_STATE_COLLECTING;
+                channel->peak_count = 1u;
+                channel->first_peak_ms = (now_ms >= sQvarAppConfig.readPeriodMs) ?
+                    (now_ms - sQvarAppConfig.readPeriodMs) : now_ms;
+                channel->last_peak_ms = channel->first_peak_ms;
+                channel->pre_touch_baseline = channel->baseline;
+                channel->max_peak_delta = delta_prev1;
+                channel->rebound_crest = v_curr;
             }
-            else
+            break;
+        }
+
+        case IMU_APP_QVAR_PEAK_STATE_COLLECTING:
+        {
+            delta = (int32_t)channel->pre_touch_baseline - (int32_t)v_curr;
+            if (delta > channel->max_peak_delta)
             {
-                /* Tap 1 completed! Start double-tap timer */
-                channel->tap_count = 1u;
-                channel->tap1_release_ms = now_ms;
-                channel->tap1_peak_delta = channel->peak_delta;
-                channel->tap1_duration_ms = duration_ms;
+                channel->max_peak_delta = delta;
             }
+
+            /* Track highest rebound crest between tap strikes */
+            if (v_curr > channel->rebound_crest)
+            {
+                channel->rebound_crest = v_curr;
+            }
+
+            delta_prev1 = (int32_t)channel->pre_touch_baseline - (int32_t)v_p1;
+
+            /* Check for subsequent plunge peak (tap 2, 3, etc.) */
+            if ((v_p1 <= v_p2) && (v_p1 < v_curr) &&
+                (delta_prev1 >= sQvarAppConfig.qvar1ButtonMinPeakRaw))
+            {
+                uint32_t cand_peak_ms = (now_ms >= sQvarAppConfig.readPeriodMs) ?
+                    (now_ms - sQvarAppConfig.readPeriodMs) : now_ms;
+                int32_t rebound_lift = (int32_t)channel->rebound_crest - (int32_t)v_p1;
+
+                /* Must satisfy refractory period (>= 70 ms) and finger lift rebound (>= 1500 LSB) */
+                if (((cand_peak_ms - channel->last_peak_ms) >= 70u) &&
+                    (rebound_lift >= 1500L))
+                {
+                    channel->peak_count++;
+                    channel->last_peak_ms = cand_peak_ms;
+                    channel->rebound_crest = v_curr;
+                }
+            }
+
+            /* Hold detection: sustained deep plunge for >= holdTimeMs */
+            if (((now_ms - channel->first_peak_ms) >= sQvarAppConfig.qvar1ButtonHoldTimeMs) &&
+                (delta >= sQvarAppConfig.qvar1ButtonThresholdRaw))
+            {
+                channel->state = IMU_APP_QVAR_PEAK_STATE_HOLD;
+                printf("[IMU QVAR] Q1 BUTTON HOLD\r\n");
+            }
+            /* Gesture window evaluation: doubleTapWindowMs elapsed since last peak */
+            else if ((now_ms - channel->last_peak_ms) >= sQvarAppConfig.qvar1ButtonDoubleTapWindowMs)
+            {
+                if (channel->peak_count == 1u)
+                {
+                    uint32_t dur_ms = now_ms - channel->first_peak_ms;
+                    printf("[IMU QVAR] Q1 BUTTON SINGLE (peak=%ld LSB / %.1f mV, dur=%lu ms)\r\n",
+                           (long)channel->max_peak_delta,
+                           (float)channel->max_peak_delta / 78.0f,
+                           (unsigned long)dur_ms);
+                }
+                else if (channel->peak_count == 2u)
+                {
+                    uint32_t interval_ms = channel->last_peak_ms - channel->first_peak_ms;
+                    printf("[IMU QVAR] Q1 BUTTON DOUBLE (interval=%lu ms, peak=%ld LSB / %.1f mV)\r\n",
+                           (unsigned long)interval_ms,
+                           (long)channel->max_peak_delta,
+                           (float)channel->max_peak_delta / 78.0f);
+                }
+                else if (channel->peak_count >= 3u)
+                {
+                    printf("[IMU QVAR] Q1 BUTTON TRIPLE (peaks=%u, peak=%ld LSB / %.1f mV)\r\n",
+                           (unsigned)channel->peak_count,
+                           (long)channel->max_peak_delta,
+                           (float)channel->max_peak_delta / 78.0f);
+                }
+
+                /* Re-anchor baseline to current post-gesture value to absorb recovery drift */
+                channel->baseline = v_curr;
+                channel->last_event_ms = now_ms;
+                channel->state = IMU_APP_QVAR_PEAK_STATE_IDLE;
+            }
+            break;
+        }
+
+        case IMU_APP_QVAR_PEAK_STATE_HOLD:
+        {
+            delta = (int32_t)channel->pre_touch_baseline - (int32_t)v_curr;
+
+            /* Release when delta falls below release threshold */
+            if (delta <= sQvarAppConfig.qvar1ButtonReleaseRaw)
+            {
+                printf("[IMU QVAR] Q1 BUTTON HOLD RELEASE\r\n");
+                channel->baseline = v_curr;
+                channel->last_event_ms = now_ms;
+                channel->state = IMU_APP_QVAR_PEAK_STATE_IDLE;
+            }
+            break;
+        }
+
+        default:
+        {
+            channel->state = IMU_APP_QVAR_PEAK_STATE_IDLE;
+            break;
         }
     }
+
+    channel->v_prev2 = channel->v_prev1;
+    channel->v_prev1 = v_curr;
 }
 
 static void imu_app_qvar_process_sample(const imu_qvar_raw_t *raw, uint32_t now_ms)

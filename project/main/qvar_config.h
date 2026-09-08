@@ -145,7 +145,7 @@ typedef struct {
     .qvar1ButtonMinPeakRaw = 2500L,                        \
     .qvar1ButtonMaxPressMs = 400u,                         \
     .qvar1ButtonHoldTimeMs = 800u,                         \
-    .qvar1ButtonDoubleTapWindowMs = 350u,                  \
+    .qvar1ButtonDoubleTapWindowMs = 300u,                  \
     .qvar1ButtonTouchConfirmSamples = 3u,                  \
     .qvar1ButtonReleaseConfirmSamples = 2u                 \
 }
