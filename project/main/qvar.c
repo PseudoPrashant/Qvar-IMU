@@ -477,6 +477,54 @@ HAL_StatusTypeDef imu_qvar_print_raw(void)
     return HAL_OK;
 }
 
+/* Circular 7-sample moving average FIR filter to cancel 50 Hz power line hum per ST AN5755 Section 5.1.6 */
+#define QVAR_MA_FILTER_WINDOW 7u
+
+typedef struct {
+    int16_t buffer[QVAR_MA_FILTER_WINDOW];
+    int32_t sum;
+    uint8_t index;
+    uint8_t count;
+} qvar_ma_filter_t;
+
+static qvar_ma_filter_t sFilterQ1 = {0};
+static qvar_ma_filter_t sFilterQ2 = {0};
+
+static void qvar_ma_filter_reset(qvar_ma_filter_t *filt)
+{
+    if (filt == NULL)
+    {
+        return;
+    }
+    memset(filt->buffer, 0, sizeof(filt->buffer));
+    filt->sum = 0;
+    filt->index = 0u;
+    filt->count = 0u;
+}
+
+static int16_t qvar_ma_filter_apply(qvar_ma_filter_t *filt, int16_t sample)
+{
+    if (filt == NULL)
+    {
+        return sample;
+    }
+
+    if (filt->count < QVAR_MA_FILTER_WINDOW)
+    {
+        filt->buffer[filt->index] = sample;
+        filt->sum += (int32_t)sample;
+        filt->count++;
+        filt->index = (filt->index + 1u) % QVAR_MA_FILTER_WINDOW;
+        return (int16_t)(filt->sum / (int32_t)filt->count);
+    }
+
+    filt->sum -= (int32_t)filt->buffer[filt->index];
+    filt->buffer[filt->index] = sample;
+    filt->sum += (int32_t)sample;
+    filt->index = (filt->index + 1u) % QVAR_MA_FILTER_WINDOW;
+    return (int16_t)(filt->sum / (int32_t)QVAR_MA_FILTER_WINDOW);
+}
+
 static int32_t imu_app_qvar_abs_delta(int16_t value, int16_t baseline)
 {
     int32_t delta = (int32_t)value - (int32_t)baseline;
@@ -940,6 +988,8 @@ void imu_qvar_app_task(void)
             sImuAppQvarBaselinePrinted = 0u;
             imu_app_qvar_button_reset(&sImuAppQvarButtonQ1);
             imu_app_qvar_wear_reset(&sImuAppQvarWearQ2);
+            qvar_ma_filter_reset(&sFilterQ1);
+            qvar_ma_filter_reset(&sFilterQ2);
             printf("[IMU TEST] Qvar polling started q1_button=%u q2_wear=%u\r\n",
                    (config.qvar1Use == IMU_QVAR_USE_BUTTON) ? 1u : 0u,
                    (config.qvar2Use == IMU_QVAR_USE_WEAR) ? 1u : 0u);
@@ -964,6 +1014,16 @@ void imu_qvar_app_task(void)
         return;
     }
 
+    /* Apply 7-sample FIR moving average to eliminate 50 Hz mains hum */
+    if (raw.qvar1Valid != 0u)
+    {
+        raw.qvar1 = qvar_ma_filter_apply(&sFilterQ1, raw.qvar1);
+    }
+    if (raw.qvar2Valid != 0u)
+    {
+        raw.qvar2 = qvar_ma_filter_apply(&sFilterQ2, raw.qvar2);
+    }
+
     imu_app_qvar_print_raw_sample(&raw);
 
     if (sImuAppQvarStartupSettled == 0u)
@@ -977,6 +1037,8 @@ void imu_qvar_app_task(void)
         sImuAppQvarBaselinePrinted = 0u;
         imu_app_qvar_button_reset(&sImuAppQvarButtonQ1);
         imu_app_qvar_wear_reset(&sImuAppQvarWearQ2);
+        qvar_ma_filter_reset(&sFilterQ1);
+        qvar_ma_filter_reset(&sFilterQ2);
         printf("[IMU QVAR] startup settle done after %lu ms; baseline learning starts now\r\n",
                (unsigned long)sQvarAppConfig.startupSettleMs);
         return;

