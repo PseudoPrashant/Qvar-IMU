@@ -37,6 +37,7 @@ typedef struct {
     int32_t qvar1ButtonMinPeakRaw;          /* Minimum peak for single press. */
     uint32_t qvar1ButtonMaxPressMs;         /* Max duration for single press. */
     uint32_t qvar1ButtonHoldTimeMs;         /* Duration needed for hold. */
+    uint32_t qvar1ButtonDoubleTapWindowMs;  /* Max delay between taps for double-tap. */
     uint8_t qvar1ButtonTouchConfirmSamples; /* Press confirm sample count. */
     uint8_t qvar1ButtonReleaseConfirmSamples; /* Release confirm sample count. */
 } qvar_app_config_t;
@@ -63,6 +64,7 @@ typedef struct {
     .qvar1ButtonMinPeakRaw = 25000L,                       \
     .qvar1ButtonMaxPressMs = 400u,                         \
     .qvar1ButtonHoldTimeMs = 1200u,                        \
+    .qvar1ButtonDoubleTapWindowMs = 350u,                  \
     .qvar1ButtonTouchConfirmSamples = 3u,                  \
     .qvar1ButtonReleaseConfirmSamples = 3u                 \
 }
@@ -89,6 +91,7 @@ typedef struct {
     .qvar1ButtonMinPeakRaw = 1300L,                        \
     .qvar1ButtonMaxPressMs = 400u,                         \
     .qvar1ButtonHoldTimeMs = 1200u,                        \
+    .qvar1ButtonDoubleTapWindowMs = 350u,                  \
     .qvar1ButtonTouchConfirmSamples = 3u,                  \
     .qvar1ButtonReleaseConfirmSamples = 3u                 \
 }
@@ -115,6 +118,7 @@ typedef struct {
     .qvar1ButtonMinPeakRaw = 1300L,                        \
     .qvar1ButtonMaxPressMs = 400u,                         \
     .qvar1ButtonHoldTimeMs = 1200u,                        \
+    .qvar1ButtonDoubleTapWindowMs = 350u,                  \
     .qvar1ButtonTouchConfirmSamples = 3u,                  \
     .qvar1ButtonReleaseConfirmSamples = 3u                 \
 }
@@ -129,7 +133,7 @@ typedef struct {
     .baselineSamples = 50u,                                \
     .baselineTrackDiv = 8L,                                \
     .wearAvgSamples = 10u,                                 \
-    .buttonEventCooldownMs = 120u,                         \
+    .buttonEventCooldownMs = 50u,                          \
     .buttonIdleRearmMs = 100u,                             \
     .wearButtonArmDelayMs = 0u,                            \
     .qvar2WearThresholdRaw = 700L,                         \
@@ -139,8 +143,9 @@ typedef struct {
     .qvar1ButtonThresholdRaw = 2000L,                      \
     .qvar1ButtonReleaseRaw = 1000L,                        \
     .qvar1ButtonMinPeakRaw = 2500L,                        \
-    .qvar1ButtonMaxPressMs = 600u,                         \
+    .qvar1ButtonMaxPressMs = 400u,                         \
     .qvar1ButtonHoldTimeMs = 800u,                         \
+    .qvar1ButtonDoubleTapWindowMs = 350u,                  \
     .qvar1ButtonTouchConfirmSamples = 3u,                  \
     .qvar1ButtonReleaseConfirmSamples = 2u                 \
 }
@@ -167,6 +172,7 @@ typedef struct {
     .qvar1ButtonMinPeakRaw = 1300L,                        \
     .qvar1ButtonMaxPressMs = 400u,                         \
     .qvar1ButtonHoldTimeMs = 1200u,                        \
+    .qvar1ButtonDoubleTapWindowMs = 350u,                  \
     .qvar1ButtonTouchConfirmSamples = 3u,                  \
     .qvar1ButtonReleaseConfirmSamples = 3u                 \
 }
