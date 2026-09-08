@@ -124,7 +124,7 @@ typedef struct {
     .enable = 1u,                                          \
     .rawLogEnable = 1u,                                    \
     .qvarConfig = QVAR_CONFIG_BUTTON_Q1_ONLY,              \
-    .readPeriodMs = 25u,                                   \
+    .readPeriodMs = 20u,                                   \
     .startupSettleMs = 5000u,                              \
     .baselineSamples = 40u,                                \
     .baselineTrackDiv = 32L,                               \
@@ -136,13 +136,13 @@ typedef struct {
     .qvar2WearReleaseRaw = 250L,                           \
     .qvar2WearOnConfirmMs = 500u,                          \
     .qvar2WearOffConfirmMs = 1500u,                        \
-    .qvar1ButtonThresholdRaw = 900L,                       \
-    .qvar1ButtonReleaseRaw = 350L,                         \
-    .qvar1ButtonMinPeakRaw = 1300L,                        \
+    .qvar1ButtonThresholdRaw = 600L,                       \
+    .qvar1ButtonReleaseRaw = 250L,                         \
+    .qvar1ButtonMinPeakRaw = 800L,                         \
     .qvar1ButtonMaxPressMs = 400u,                         \
     .qvar1ButtonHoldTimeMs = 1200u,                        \
-    .qvar1ButtonTouchConfirmSamples = 3u,                  \
-    .qvar1ButtonReleaseConfirmSamples = 3u                 \
+    .qvar1ButtonTouchConfirmSamples = 2u,                  \
+    .qvar1ButtonReleaseConfirmSamples = 2u                 \
 }
 
 /* QVAR2 wear only; QVAR1 button disabled. */

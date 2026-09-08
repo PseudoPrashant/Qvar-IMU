@@ -26,11 +26,15 @@ The polling logic in `qvar.c` replaces STM32 HAL timing functions with FreeRTOS 
   #define QVAR_APP_ACTIVE_CONFIG QVAR_APP_CONFIG_BUTTON_Q1_ONLY
   ```
 - **Tuned Input Impedance ($Z_{in}$)**:
-  - Configured to `IMU_QVAR_ZIN_300_MOHM` ($300\text{ M}\Omega$) in `QVAR_CONFIG_BUTTON_Q1_ONLY` ([qvar.h](file:///c:/Users/prash/OneDrive/Desktop/IMU/IMU/project/main/qvar.h)) per ST AN5755 Section 5.3.1 to suppress airborne 50 Hz electric field interference while preserving responsive button touch.
+  - Configured to `IMU_QVAR_ZIN_235_MOHM` ($235\text{ M}\Omega$) in `QVAR_CONFIG_BUTTON_Q1_ONLY` ([qvar.h](file:///c:/Users/prash/OneDrive/Desktop/IMU/IMU/project/main/qvar.h)) per ST AN5755 Section 5.3.1 (Page 19, line 54: `CTRL7 = 0xB0`), attenuating radiated airborne electric field noise by an additional $\approx 22\%$ over $300\text{ M}\Omega$.
 - **Hardware High-Pass Filter (HPF)**:
   - Enabled `.hpfEnable = 1u` in `QVAR_CONFIG_BUTTON_Q1_ONLY` ([qvar.h](file:///c:/Users/prash/OneDrive/Desktop/IMU/IMU/project/main/qvar.h)) per ST AN5755 Section 5.1.4 to eliminate floating-electrode DC static charge accumulation and recenter the baseline around $0\text{ LSB}$.
-- **7-Sample Moving Average FIR Filter**:
-  - Implemented circular 7-sample rolling average in `qvar.c` per ST AN5755 Section 5.1.6 to notch out residual 50 Hz power line hum, reducing idle peak-to-peak ripple by $>87\%$ without impacting button touch responsiveness.
+- **7-Sample Moving Average FIR Comb Filter**:
+  - Implemented circular 7-sample rolling average in `qvar.c` per ST AN5755 Section 5.1.6 to notch out residual 50 Hz power line hum, reducing idle peak-to-peak ripple by $>80\%$ without impacting button touch responsiveness.
+- **Deterministic 20 ms Polling Loop**:
+  - Implemented non-drifting periodic task pacing via `vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(20))` in [main.c](file:///c:/Users/prash/OneDrive/Desktop/IMU/IMU/project/main/main.c), eliminating FreeRTOS scheduling jitter and phase slip.
+- **Single-Tap & Hold Responsive Threshold Tuning**:
+  - Adapted `qvar_config.h` for the lowered noise floor: `press_th = 600 LSB`, `release = 250 LSB`, `min_peak = 800 LSB`, and `touchConfirmSamples = 2`, enabling sensitive single-tap detection (`Q1 BUTTON SINGLE`) alongside sustained long presses (`Q1 BUTTON HOLD`).
 - **Physical Voltage Readout**:
   - Scaled via ST AN5755 Section 4.3 constant ($1\text{ mV} = 78\text{ LSB}$) displayed in real time on the live plotter HUD.
 

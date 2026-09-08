@@ -1002,7 +1002,8 @@ void imu_qvar_app_task(void)
     }
 
     now_ms = (xTaskGetTickCount() * portTICK_PERIOD_MS);
-    if ((now_ms - sImuAppQvarLastReadMs) < sQvarAppConfig.readPeriodMs)
+    if ((sQvarAppConfig.readPeriodMs > (portTICK_PERIOD_MS / 2u)) &&
+        ((now_ms - sImuAppQvarLastReadMs) < (sQvarAppConfig.readPeriodMs - (portTICK_PERIOD_MS / 2u))))
     {
         return;
     }
