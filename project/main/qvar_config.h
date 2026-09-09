@@ -42,7 +42,7 @@ typedef struct {
     uint8_t qvar1ButtonReleaseConfirmSamples; /* Release confirm sample count. */
     int32_t tapPressThresholdRaw;           /* 4-sample peak-to-peak contact threshold (e.g. 3300 LSB). */
     int32_t tapReleaseThresholdRaw;         /* Release threshold with hysteresis (e.g. 2650 LSB). */
-    uint16_t tapMinDurationSamples;         /* Min tap duration (e.g. 3 samples = 15 ms). */
+    uint16_t tapMinDurationSamples;         /* Min tap duration (e.g. 8 samples = 40 ms). */
     uint16_t tapMaxDurationSamples;         /* Max tap duration (e.g. 70 samples = 350 ms, rejects holds). */
     uint16_t tapCooldownSamples;            /* Refractory lockout after tap (e.g. 25 samples = 125 ms). */
     uint16_t tapSquelchTimerSamples;        /* Disturbance squelch lockout (e.g. 50 samples = 250 ms). */
@@ -55,6 +55,10 @@ typedef struct {
     int32_t tapMinPeakActRaw;               /* Minimum activity peak required for tap (e.g. 3300 LSB). */
     float tapAlphaRise;                     /* EMA rise factor (e.g. 0.999f = slow rise during contact). */
     float tapAlphaFall;                     /* EMA fall factor (e.g. 0.988f = fast fall when calm). */
+    int32_t tapLowerThresholdRaw;           /* Band-pass floor (3500 LSB). */
+    int32_t tapUpperCeilingRaw;             /* Band-pass kill-switch ceiling (5500 LSB). */
+    uint16_t tapBridgeTimerSamples;         /* Bridge timer (10 samples = 50 ms). */
+    uint16_t tapLockoutSamples;             /* Post-tap lockout cooldown (30 samples = 150 ms). */
 } qvar_app_config_t;
 
 /* App off: QVAR app does not start sensing. */
@@ -165,7 +169,7 @@ typedef struct {
     .qvar1ButtonReleaseConfirmSamples = 2u,                \
     .tapPressThresholdRaw = 3300L,                         \
     .tapReleaseThresholdRaw = 2650L,                       \
-    .tapMinDurationSamples = 3u,                           \
+    .tapMinDurationSamples = 8u,                           \
     .tapMaxDurationSamples = 70u,                          \
     .tapCooldownSamples = 25u,                             \
     .tapSquelchTimerSamples = 50u,                         \
@@ -177,7 +181,11 @@ typedef struct {
     .tapReleaseDeltaRaw = 600L,                            \
     .tapMinPeakActRaw = 3300L,                             \
     .tapAlphaRise = 0.99917f,                              \
-    .tapAlphaFall = 0.9875f                                \
+    .tapAlphaFall = 0.9875f,                               \
+    .tapLowerThresholdRaw = 3500L,                         \
+    .tapUpperCeilingRaw = 5500L,                           \
+    .tapBridgeTimerSamples = 10u,                          \
+    .tapLockoutSamples = 30u                               \
 }
 
 /* QVAR2 wear only; QVAR1 button disabled. */

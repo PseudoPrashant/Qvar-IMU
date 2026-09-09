@@ -58,26 +58,20 @@ python plotter.py --port COM7
 
 ---
 
-## 4-Stage Robust Tap Detector with Adaptive Baseline Envelope Filter
+## Time-Gated Band-Pass State Machine Tap Detection Engine
 
-The firmware includes an adaptive baseline tracking state machine designed to reject electrostatic DC transients (from sensor movement) and high ambient 50 Hz hum while detecting 100% of true finger taps.
+The firmware includes a time-gated, band-pass state machine designed to detect finger taps while completely rejecting environmental disturbances and handling movement.
 
-### Algorithmic Features:
-1. **Asymmetric EMA Baseline Tracker**:
-   - Rise factor $\alpha_{\text{rise}} = 0.99917$ (slow tracking during contact)
-   - Fall factor $\alpha_{\text{fall}} = 0.9875$ (fast tracking when calm)
-2. **Dynamic Thresholds**:
-   - $T_{\text{press}} = \text{Baseline}[n] + 1100\text{ LSB}$
-   - $T_{\text{release}} = \text{Baseline}[n] + 600\text{ LSB}$
-3. **Glitch Bypass**:
-   - Contacts $< 15\text{ ms}$ (3 samples) return to `IDLE` without squelching.
-4. **Natural Tap Window**:
-   - Maximum tap duration: 70 samples ($350\text{ ms}$).
-5. **Re-Armed Squelch Lockout**:
-   - Re-arms automatically on prolonged disturbances until 15 consecutive calm samples are observed.
+### Five Tuned Parameters (at 200 Hz / 5 ms per sample):
+1. **Lower Threshold (`3,500 LSB`)**: The floor required to clear background noise and open a candidate Tap Event.
+2. **Upper Ceiling (`5,500 LSB`)**: The kill-switch. If Activity breaks $5,500	ext{ LSB}$ at any point while an event is open, it is permanently flagged **Invalid** (handling transients / movement).
+3. **Bridge Timer (`50 ms` / 10 samples)**: Prevents phase troughs from splitting a single tap. If Activity dips below $3,500	ext{ LSB}$, the event remains open for up to $50	ext{ ms}$ to bridge.
+4. **Minimum Duration (`40 ms` / 8 samples)**: Rejects microscopic static pops. If total event duration is $< 40	ext{ ms}$, it is deleted.
+5. **Lockout Cooldown (`150 ms` / 30 samples)**: Enforces a $150	ext{ ms}$ refractory period after tap confirmation to suppress release chatter.
 
-### Dual-Dataset Verification Results:
-- `touchdetct-1.csv`: **21 / 21 true taps detected (100.0%)**, **0 False Positives** during movement or 16,000 LSB ambient hum.
-- `peak-to-peak-200hz.csv`: **20 / 20 true taps detected (100.0%)**, **0 False Positives** during Disturbance 1 & 2.
-- Combined Accuracy: **41 / 41 true taps (100.0%)**, **0 FP, 0 FN**.
-
+### Execution Flow:
+- When $	ext{Activity} > 3,500	ext{ LSB}$, opens Tap Event (`Valid = true`).
+- If $	ext{Activity} > 5,500	ext{ LSB}$ at any point, permanently sets `Valid = false`.
+- When $	ext{Activity} < 3,500	ext{ LSB}$ for 10 consecutive samples ($50	ext{ ms}$), the event closes.
+- If `Valid == true` and active duration $\ge 40	ext{ ms}$, emits `[IMU QVAR TAP] #N dur=... peak=...`.
+- Enforces $150	ext{ ms}$ lockout before next event can begin.

@@ -167,26 +167,25 @@ python plot_raw_q1.py --window 500
 
 ---
 
-## 4-Stage Robust Tap Detector with Adaptive Baseline Envelope Filter
+## Time-Gated Band-Pass State Machine Tap Detection Engine
 
-The production firmware includes an advanced state-machine tap detector designed to reject electrostatic DC drift, mechanical movement, and ambient 50 Hz powerline hum while detecting 100% of true finger taps.
+The production firmware integrates a time-gated, band-pass state machine designed to reliably isolate finger taps while completely rejecting environmental disturbances, mechanical movement, and handling noise.
 
-### Key Architecture:
-1. **Envelope Extractor**: Continuous 5-sample peak-to-peak sliding window $\max(x) - \min(x)$ demodulating the 50 Hz AC carrier wave.
-2. **Adaptive Baseline Filter**: Asymmetric Exponential Moving Average (EMA) tracking the ambient activity noise floor:
-   - Ultra-slow rise ($\alpha_{\text{rise}} = 0.99917$, $\tau \approx 6.0\text{ s}$) during contact so touches do not elevate the baseline.
-   - Fast fall ($\alpha_{\text{fall}} = 0.9875$, $\tau \approx 0.4\text{ s}$) to track true calm background levels.
-3. **Dynamic Hysteresis Thresholds**:
-   - $T_{\text{press}} = \text{Baseline}[n] + 1100\text{ LSB}$
-   - $T_{\text{release}} = \text{Baseline}[n] + 600\text{ LSB}$
-4. **4-Stage State Machine**:
-   - `TAP_STATE_IDLE`: Baseline tracking; triggers on $Activity \ge T_{\text{press}}$.
-   - `TAP_STATE_CONTACT`: Tracks contact duration, peak activity, and raw excursions. Rejects holds ($> 350\text{ ms}$) and unipolar DC blasts into `SQUELCH`. Bypasses $< 15\text{ ms}$ glitches back to `IDLE`.
-   - `TAP_STATE_COOLDOWN`: 25 samples ($125\text{ ms}$) refractory lockout preventing contact chatter.
-   - `TAP_STATE_SQUELCH`: Lockout protecting against prolonged environmental disturbances, re-arming only after 15 consecutive calm samples ($< T_{\text{release}}$).
+### Architecture & Five Tuned Parameters (at 200 Hz / 5 ms per sample):
+1. **Envelope Extractor**: Continuous 5-sample peak-to-peak sliding window $\max(x[n..n-4]) - \min(x[n..n-4])$ demodulating the 50 Hz AC carrier into a solid unipolar Activity pulse.
+2. **Lower Threshold (`3,500 LSB`)**: The floor required to clear resting background noise and initiate a candidate Tap Event.
+3. **Upper Ceiling (`5,500 LSB`)**: The hard kill-switch. A real finger tap in the system stays within $(3500, 5500)\text{ LSB}$. If the signal breaks $5,500\text{ LSB}$ at any point while an event is open, the event is immediately and permanently marked as **Invalid** (rejecting handling shocks and sensor repositioning).
+4. **Bridge Timer (`50 ms` / 10 samples)**: Prevents phase-misalignment from fracturing a single tap into multiple triggers. If the signal dips below $3,500\text{ LSB}$, the event stays active for up to $50\text{ ms}$ to bridge troughs.
+5. **Minimum Duration (`40 ms` / 8 samples)**: Rejects microscopic static pops and electrical glitches. If an event drops below $3,500\text{ LSB}$ and fails to sustain at least $40\text{ ms}$ of total duration, it is discarded.
+6. **Lockout Cooldown (`150 ms` / 30 samples)**: Once a valid tap is confirmed, incoming data is ignored for $150\text{ ms}$ to prevent finger release mechanics from triggering a false double-tap.
 
-### Dual-Dataset Benchmark Results:
-- `touchdetct-1.csv`: **21 / 21 true taps detected (100.0%)**, **0 False Positives** during movement or 16,000 LSB ambient hum.
-- `peak-to-peak-200hz.csv`: **20 / 20 true taps detected (100.0%)**, **0 False Positives** during Disturbance 1 & 2.
-- Combined Accuracy: **41 / 41 true taps (100.0%)**, **0 FP, 0 FN**.
+### Execution Flow:
+- When $\text{Activity} > 3,500\text{ LSB}$, a new Tap Event opens and is marked `Valid`.
+- If $\text{Activity} > 5,500\text{ LSB}$ at any time during the event, it is permanently flagged `Invalid`.
+- When $\text{Activity} < 3,500\text{ LSB}$ for 10 consecutive samples ($50\text{ ms}$), the event closes.
+- If `Valid == true` and active duration $\ge 40\text{ ms}$, the tap is emitted:
+  ```text
+  [IMU QVAR] TAP DETECTED #<count> (dur=<ms> ms, peak=<lsb> LSB / <mv> mV)
+  ```
+- Enforces $150\text{ ms}$ lockout cooldown before re-arming.
 

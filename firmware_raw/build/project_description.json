@@ -1,7 +1,7 @@
 {
     "version":            "1.3",
     "project_name":       "raw_qvar_firmware",
-    "project_version":    "36f2520-dirty",
+    "project_version":    "f8c180c-dirty",
     "project_path":       "C:/Users/prash/OneDrive/Desktop/IMU/IMU/firmware_raw",
     "idf_path":           "C:/esp/v6.1/esp-idf",
     "build_dir":          "C:/Users/prash/OneDrive/Desktop/IMU/IMU/firmware_raw/build",

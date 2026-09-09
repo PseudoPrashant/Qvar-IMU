@@ -524,26 +524,24 @@ static int32_t qvar_envelope_extractor_update(qvar_envelope_extractor_t *env, in
     return (int32_t)max_val - (int32_t)min_val;
 }
 
-/* 4-Stage Robust Tap Detection Engine with Bipolarity Verification and Disturbance Squelch */
+/* Time-Gated Band-Pass State Machine Tap Detection Engine */
 typedef enum {
     TAP_STATE_IDLE = 0,
-    TAP_STATE_CONTACT,
-    TAP_STATE_COOLDOWN,
-    TAP_STATE_SQUELCH
+    TAP_STATE_EVENT,
+    TAP_STATE_LOCKOUT
 } tap_state_t;
 
 typedef struct {
     tap_state_t state;
+    uint8_t in_event;
+    uint8_t event_valid;
     uint32_t start_idx;
-    uint32_t peak_idx;
+    uint32_t last_above_idx;
     int32_t peak_act;
-    int16_t min_raw;
-    int16_t max_raw;
-    uint16_t timer;
-    uint16_t quiet_counter;
+    uint16_t below_counter;
+    uint16_t lockout_timer;
     uint32_t tap_count;
-    float baseline_act;
-    uint8_t baseline_init;
+    uint32_t last_tap_dur_ms;
 } robust_tap_detector_t;
 
 static robust_tap_detector_t sRobustTapDetector = {0};
@@ -553,162 +551,85 @@ static void robust_tap_detector_reset(robust_tap_detector_t *det)
 {
     if (det == NULL) return;
     det->state = TAP_STATE_IDLE;
+    det->in_event = 0u;
+    det->event_valid = 0u;
     det->start_idx = 0u;
-    det->peak_idx = 0u;
+    det->last_above_idx = 0u;
     det->peak_act = 0;
-    det->min_raw = 0;
-    det->max_raw = 0;
-    det->timer = 0u;
-    det->quiet_counter = 0u;
-    det->baseline_act = 0.0f;
-    det->baseline_init = 0u;
+    det->below_counter = 0u;
+    det->lockout_timer = 0u;
+    det->last_tap_dur_ms = 0u;
 }
 
 static uint8_t robust_tap_detector_update(robust_tap_detector_t *det,
-                                         uint32_t sample_idx,
-                                         int16_t raw_val,
-                                         int32_t act_val,
-                                         const qvar_app_config_t *cfg)
+                                          uint32_t sample_idx,
+                                          int16_t raw_val,
+                                          int32_t act_val,
+                                          const qvar_app_config_t *cfg)
 {
     uint8_t tap_confirmed = 0u;
     if (det == NULL || cfg == NULL) return 0u;
 
-    /* Initialize adaptive baseline on first sample */
-    if (det->baseline_init == 0u) {
-        det->baseline_act = (float)act_val;
-        det->baseline_init = 1u;
-    }
+    int32_t lower_th = cfg->tapLowerThresholdRaw ? cfg->tapLowerThresholdRaw : 3500L;
+    int32_t upper_ceil = cfg->tapUpperCeilingRaw ? cfg->tapUpperCeilingRaw : 5500L;
+    uint16_t bridge_samples = cfg->tapBridgeTimerSamples ? cfg->tapBridgeTimerSamples : 10u; /* 50 ms @ 200 Hz */
+    uint16_t min_dur_samples = cfg->tapMinDurationSamples ? cfg->tapMinDurationSamples : 8u; /* 40 ms @ 200 Hz */
+    uint16_t lockout_samples = cfg->tapLockoutSamples ? cfg->tapLockoutSamples : 30u;       /* 150 ms @ 200 Hz */
 
-    float a_rise = (cfg->tapAlphaRise > 0.0f) ? cfg->tapAlphaRise : 0.999f;
-    float a_fall = (cfg->tapAlphaFall > 0.0f) ? cfg->tapAlphaFall : 0.988f;
-
-    /* Update adaptive baseline in IDLE or SQUELCH */
-    if (cfg->tapAdaptiveBaselineEnable != 0u) {
-        if (det->state == TAP_STATE_IDLE) {
-            if ((float)act_val > det->baseline_act) {
-                det->baseline_act = a_rise * det->baseline_act + (1.0f - a_rise) * (float)act_val;
-            } else {
-                det->baseline_act = a_fall * det->baseline_act + (1.0f - a_fall) * (float)act_val;
-            }
-        } else if (det->state == TAP_STATE_SQUELCH) {
-            /* Slowly track towards ambient activity in squelch */
-            det->baseline_act = 0.995f * det->baseline_act + 0.005f * (float)act_val;
+    /* Enforce post-tap lockout cooldown */
+    if (det->lockout_timer > 0u) {
+        det->lockout_timer--;
+        if (det->lockout_timer == 0u) {
+            det->state = TAP_STATE_IDLE;
         }
+        return 0u;
     }
 
-    int32_t p_delta = cfg->tapPressDeltaRaw ? cfg->tapPressDeltaRaw : 1100L;
-    int32_t r_delta = cfg->tapReleaseDeltaRaw ? cfg->tapReleaseDeltaRaw : 600L;
-    int32_t min_peak = cfg->tapMinPeakActRaw ? cfg->tapMinPeakActRaw : 3300L;
-
-    int32_t th_press;
-    int32_t th_release;
-    if (cfg->tapAdaptiveBaselineEnable != 0u) {
-        th_press = (int32_t)det->baseline_act + p_delta;
-        th_release = (int32_t)det->baseline_act + r_delta;
-    } else {
-        th_press = cfg->tapPressThresholdRaw ? cfg->tapPressThresholdRaw : 3300L;
-        th_release = cfg->tapReleaseThresholdRaw ? cfg->tapReleaseThresholdRaw : 2650L;
-    }
-
-    uint16_t min_dur = cfg->tapMinDurationSamples ? cfg->tapMinDurationSamples : 3u;
-    uint16_t max_dur = cfg->tapMaxDurationSamples ? cfg->tapMaxDurationSamples : 70u;
-    uint16_t cooldown = cfg->tapCooldownSamples ? cfg->tapCooldownSamples : 25u;
-    uint16_t squelch_timer = cfg->tapSquelchTimerSamples ? cfg->tapSquelchTimerSamples : 50u;
-    uint16_t squelch_quiet = cfg->tapSquelchQuietSamples ? cfg->tapSquelchQuietSamples : 15u;
-    int16_t bip_min = cfg->tapBipolarMinRaw ? cfg->tapBipolarMinRaw : -500;
-    int16_t bip_max = cfg->tapBipolarMaxRaw ? cfg->tapBipolarMaxRaw : 500;
-
-    /* Track continuous quiet samples */
-    if (act_val < th_release) {
-        det->quiet_counter++;
-    } else {
-        det->quiet_counter = 0u;
-    }
-
-    switch (det->state)
-    {
-    case TAP_STATE_IDLE:
-        if (act_val >= th_press) {
-            det->state = TAP_STATE_CONTACT;
+    if (det->in_event == 0u) {
+        if (act_val > lower_th) {
+            det->in_event = 1u;
+            det->event_valid = (act_val <= upper_ceil) ? 1u : 0u;
             det->start_idx = sample_idx;
-            det->peak_idx = sample_idx;
+            det->last_above_idx = sample_idx;
             det->peak_act = act_val;
-            det->min_raw = raw_val;
-            det->max_raw = raw_val;
+            det->below_counter = 0u;
+            det->state = TAP_STATE_EVENT;
         }
-        break;
-
-    case TAP_STATE_CONTACT: {
-        uint32_t dur = sample_idx - det->start_idx;
-
+    } else {
+        /* While event is open */
         if (act_val > det->peak_act) {
             det->peak_act = act_val;
-            det->peak_idx = sample_idx;
-        }
-        if (raw_val < det->min_raw) det->min_raw = raw_val;
-        if (raw_val > det->max_raw) det->max_raw = raw_val;
-
-        /* Check max duration: hold or long disturbance */
-        if (dur > max_dur) {
-            det->state = TAP_STATE_SQUELCH;
-            det->timer = squelch_timer;
-            break;
         }
 
-        /* Check for contact release */
-        if (act_val < th_release) {
-            if (dur < min_dur) {
-                /* Glitch rejection: brief 1-2 sample spike, ignore without squelching */
-                det->state = TAP_STATE_IDLE;
-            } else if (dur <= max_dur) {
-                uint8_t is_bipolar = (det->min_raw <= bip_min && det->max_raw >= bip_max) ? 1u : 0u;
-                uint8_t is_strong = (det->peak_act >= min_peak) ? 1u : 0u;
+        /* Kill-switch: permanently invalidate event if ceiling breached */
+        if (act_val > upper_ceil) {
+            det->event_valid = 0u;
+        }
 
-                if (is_bipolar != 0u && is_strong != 0u) {
+        if (act_val > lower_th) {
+            det->below_counter = 0u;
+            det->last_above_idx = sample_idx;
+        } else {
+            det->below_counter++;
+            if (det->below_counter >= bridge_samples) {
+                /* When Activity < lower_th for 50 consecutive ms (10 samples), event is over */
+                uint32_t total_dur_samples = (det->last_above_idx >= det->start_idx) ?
+                                             (det->last_above_idx - det->start_idx + 1u) : 0u;
+
+                if ((det->event_valid != 0u) && (total_dur_samples >= min_dur_samples)) {
                     det->tap_count++;
+                    det->last_tap_dur_ms = total_dur_samples * 5u; /* 5 ms per sample @ 200 Hz */
                     tap_confirmed = 1u;
-                    det->state = TAP_STATE_COOLDOWN;
-                    det->timer = cooldown;
+                    det->lockout_timer = lockout_samples;
+                    det->state = TAP_STATE_LOCKOUT;
                 } else {
-                    if (is_strong == 0u && is_bipolar != 0u) {
-                        /* Weak ripple, return to IDLE */
-                        det->state = TAP_STATE_IDLE;
-                    } else {
-                        /* Unipolar DC blast / electrostatic transient -> enter squelch */
-                        det->state = TAP_STATE_SQUELCH;
-                        det->timer = squelch_timer;
-                    }
+                    det->state = TAP_STATE_IDLE;
                 }
+
+                det->in_event = 0u;
+                det->below_counter = 0u;
             }
         }
-        break;
-    }
-
-    case TAP_STATE_COOLDOWN:
-        if (det->timer > 0u) det->timer--;
-        if (det->timer == 0u) {
-            det->state = TAP_STATE_IDLE;
-            if (act_val >= th_press) {
-                det->state = TAP_STATE_CONTACT;
-                det->start_idx = sample_idx;
-                det->peak_idx = sample_idx;
-                det->peak_act = act_val;
-                det->min_raw = raw_val;
-                det->max_raw = raw_val;
-            }
-        }
-        break;
-
-    case TAP_STATE_SQUELCH:
-        if (det->timer > 0u) det->timer--;
-        if (act_val >= th_release) {
-            det->timer = squelch_timer;
-        }
-        /* Re-arm only after squelch timer elapsed AND calm baseline observed */
-        if (det->timer == 0u && det->quiet_counter >= squelch_quiet) {
-            det->state = TAP_STATE_IDLE;
-        }
-        break;
     }
 
     return tap_confirmed;
@@ -1186,22 +1107,17 @@ void imu_qvar_app_task(void)
         return;
     }
 
-    /* 4-Stage Robust Tap Detector Evaluation */
+    /* Time-Gated Band-Pass State Machine Tap Detector Evaluation */
     sTapSampleIndex++;
     if (raw.qvar1Valid != 0u)
     {
         if (robust_tap_detector_update(&sRobustTapDetector, sTapSampleIndex, q1_raw_in, q1_act, &sQvarAppConfig))
         {
-            uint32_t tap_dur_ms = (sTapSampleIndex >= sRobustTapDetector.start_idx) ?
-                                  (sTapSampleIndex - sRobustTapDetector.start_idx) * 5u : 0u;
-            printf("[IMU QVAR] TAP DETECTED #%lu (dur=%lu ms, peak=%ld LSB / %.1f mV, base=%.0f LSB, raw_span=[%d, %d])\r\n",
+            printf("[IMU QVAR] TAP DETECTED #%lu (dur=%lu ms, peak=%ld LSB / %.1f mV)\r\n",
                    (unsigned long)sRobustTapDetector.tap_count,
-                   (unsigned long)tap_dur_ms,
+                   (unsigned long)sRobustTapDetector.last_tap_dur_ms,
                    (long)sRobustTapDetector.peak_act,
-                   (float)sRobustTapDetector.peak_act / 78.0f,
-                   sRobustTapDetector.baseline_act,
-                   (int)sRobustTapDetector.min_raw,
-                   (int)sRobustTapDetector.max_raw);
+                   (float)sRobustTapDetector.peak_act / 78.0f);
         }
     }
 

@@ -217,8 +217,9 @@ def plot_live(port, baud, window_size, ylim=None, data_dir=None, csv_filename=No
     # Zero baseline reference
     ax.axhline(0, color="#64748b", linestyle="-", alpha=0.4, linewidth=0.8, label="Zero Baseline")
 
-    # Threshold guide (e.g. 3,500 LSB for touch detection)
-    thresh_line = ax.axhline(3300, color="#f87171", linestyle="--", alpha=0.6, linewidth=1.0, label="Tap Threshold (3300 LSB)")
+    # Band-Pass State Machine Thresholds
+    thresh_lower = ax.axhline(3500, color="#fbbf24", linestyle="--", alpha=0.7, linewidth=1.0, label="Lower Floor (3500 LSB)")
+    thresh_upper = ax.axhline(5500, color="#f87171", linestyle="--", alpha=0.7, linewidth=1.0, label="Upper Ceiling (5500 LSB)")
     (line_tap_markers,) = ax.plot([], [], "o", color="#facc15", markersize=9, markeredgecolor="#ffffff", markeredgewidth=1.5, label="Detected Taps")
 
     # Grid and styling
@@ -287,22 +288,48 @@ def plot_live(port, baud, window_size, ylim=None, data_dir=None, csv_filename=No
             pad = max(200.0, span * 0.12)
             ax.set_ylim(y_min_hist - pad, y_max_hist + pad)
 
-        # HUD calculation
+        # Plot confirmed tap events within visible window
+        if tap_evs:
+            visible_taps = [t for t in tap_evs if min_x <= t[0] <= max_x]
+            if visible_taps:
+                t_xs = [t[0] for t in visible_taps]
+                t_ys = [t[3] for t in visible_taps]
+                line_tap_markers.set_data(t_xs, t_ys)
+            else:
+                line_tap_markers.set_data([], [])
+        else:
+            line_tap_markers.set_data([], [])
+
+        # HUD calculation matching the firmware State Machine
         latest_raw = disp_raw[-1]
         latest_act = disp_act[-1]
         raw_mv = latest_raw / 78.0
         act_mv = latest_act / 78.0
-        is_touch = latest_act >= 3000
-        state_str = "ACTIVE TOUCH DETECTED" if is_touch else "IDLE (NO TOUCH)"
+
+        now = time.time()
+        if last_tap and (now - last_tap_time) < 1.5:
+            t_id, t_dur, t_peak = last_tap
+            state_str = f"*** TAP CONFIRMED #{t_id} (dur={t_dur} ms, peak={t_peak} LSB) ***"
+            status_color = "#facc15"  # bright yellow
+        elif latest_act > 5500:
+            state_str = "REJECTED (ABOVE 5500 LSB UPPER CEILING - KILL-SWITCH)"
+            status_color = "#f87171"  # red
+        elif latest_act > 3500:
+            state_str = "IN-BAND CANDIDATE EVENT (3500 - 5500 LSB)"
+            status_color = "#38bdf8"  # cyan
+        else:
+            state_str = "IDLE (BELOW 3500 LSB NOISE FLOOR)"
+            status_color = "#94a3b8"  # gray
+
         csv_basename = os.path.basename(csv_path) if csv_path else "None"
 
         hud_text.set_text(
             f"Raw Q1   : {latest_raw:+6d} LSB ({raw_mv:+6.1f} mV)\n"
-            f"Activity : {latest_act:6d} LSB ({act_mv:5.1f} mV) [4-Sample P2P Envelope]\n"
+            f"Activity : {latest_act:6d} LSB ({act_mv:5.1f} mV) [5-Sample P2P Envelope]\n"
             f"Status   : {state_str}\n"
-            f"Logging  : data/{csv_basename} ({total_samples:,} samples @ 250 Hz)"
+            f"Firmware Taps: {len(tap_evs)} | Logging: data/{csv_basename}"
         )
-        hud_text.set_color("#4ade80" if is_touch else "#38bdf8")
+        hud_text.set_color(status_color)
 
         return line_raw, line_act, line_tap_markers, hud_text, status_text, title_text
 
