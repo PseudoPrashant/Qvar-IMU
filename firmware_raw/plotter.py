@@ -41,6 +41,7 @@ except ImportError:
 # Regex to extract Q1 raw sample and optional Q1_ACT envelope from ESP32 serial stream
 # Matches: [IMU QVAR RAW] Q1=1240 Q1_ACT=1180 Q2=... or Q1=-52
 RE_TELEMETRY = re.compile(r"\[IMU QVAR RAW\]\s+Q1=(?:NA:)?(-?\d+)(?:\s+Q1_ACT=(?:NA:)?(-?\d+))?")
+RE_TAP = re.compile(r"\[IMU QVAR TAP\]\s+#(\d+)\s+dur=(\d+)\s*ms\s+peak=(\d+)(?:\s+LSB)?(?:\s+base=([\d\.]+))?")
 DEFAULT_DATA_DIR = r"C:\Users\prash\OneDrive\Desktop\IMU\IMU\firmware_raw\data"
 
 
@@ -83,6 +84,9 @@ class DualQ1SerialReader:
         self.indices = collections.deque(maxlen=max_samples)
         self.raw_vals = collections.deque(maxlen=max_samples)
         self.act_vals = collections.deque(maxlen=max_samples)
+        self.tap_events = collections.deque(maxlen=100)
+        self.latest_tap_info = None
+        self.latest_tap_time = 0.0
 
         self.thread = threading.Thread(target=self._worker, daemon=True)
         self.thread.start()
@@ -110,6 +114,16 @@ class DualQ1SerialReader:
                 line = line_bytes.decode("utf-8", errors="replace").strip()
                 if not line:
                     continue
+
+                m_tap = RE_TAP.search(line)
+                if m_tap:
+                    t_id = int(m_tap.group(1))
+                    t_dur = int(m_tap.group(2))
+                    t_peak = int(m_tap.group(3))
+                    with self.lock:
+                        self.tap_events.append((self.sample_idx, t_id, t_dur, t_peak))
+                        self.latest_tap_info = (t_id, t_dur, t_peak)
+                        self.latest_tap_time = time.time()
 
                 m = RE_TELEMETRY.search(line)
                 if m:
@@ -163,6 +177,9 @@ class DualQ1SerialReader:
                 self.csv_path,
                 self.sample_idx,
                 self.has_act,
+                list(self.tap_events),
+                self.latest_tap_info,
+                self.latest_tap_time,
             )
 
     def stop(self):
@@ -201,7 +218,8 @@ def plot_live(port, baud, window_size, ylim=None, data_dir=None, csv_filename=No
     ax.axhline(0, color="#64748b", linestyle="-", alpha=0.4, linewidth=0.8, label="Zero Baseline")
 
     # Threshold guide (e.g. 3,500 LSB for touch detection)
-    thresh_line = ax.axhline(3000, color="#f87171", linestyle="--", alpha=0.6, linewidth=1.0, label="Touch Threshold (3000 LSB)")
+    thresh_line = ax.axhline(3300, color="#f87171", linestyle="--", alpha=0.6, linewidth=1.0, label="Tap Threshold (3300 LSB)")
+    (line_tap_markers,) = ax.plot([], [], "o", color="#facc15", markersize=9, markeredgecolor="#ffffff", markeredgewidth=1.5, label="Detected Taps")
 
     # Grid and styling
     ax.grid(True, linestyle="--", alpha=0.25, color="#475569")
@@ -234,7 +252,7 @@ def plot_live(port, baud, window_size, ylim=None, data_dir=None, csv_filename=No
 
     def update(frame):
         nonlocal y_min_hist, y_max_hist
-        xs, r_ys, a_ys, status, connected, csv_path, total_samples, has_act = reader.get_data()
+        xs, r_ys, a_ys, status, connected, csv_path, total_samples, has_act, tap_evs, last_tap, last_tap_time = reader.get_data()
 
         status_text.set_text(status)
         status_text.set_color("#4ade80" if connected else "#f87171")
@@ -286,7 +304,7 @@ def plot_live(port, baud, window_size, ylim=None, data_dir=None, csv_filename=No
         )
         hud_text.set_color("#4ade80" if is_touch else "#38bdf8")
 
-        return line_raw, line_act, hud_text, status_text, title_text
+        return line_raw, line_act, line_tap_markers, hud_text, status_text, title_text
 
     ani = animation.FuncAnimation(fig, update, interval=25, blit=False, cache_frame_data=False)
 

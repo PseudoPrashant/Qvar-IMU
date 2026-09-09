@@ -40,6 +40,21 @@ typedef struct {
     uint32_t qvar1ButtonDoubleTapWindowMs;  /* Max delay between taps for double-tap. */
     uint8_t qvar1ButtonTouchConfirmSamples; /* Press confirm sample count. */
     uint8_t qvar1ButtonReleaseConfirmSamples; /* Release confirm sample count. */
+    int32_t tapPressThresholdRaw;           /* 4-sample peak-to-peak contact threshold (e.g. 3300 LSB). */
+    int32_t tapReleaseThresholdRaw;         /* Release threshold with hysteresis (e.g. 2650 LSB). */
+    uint16_t tapMinDurationSamples;         /* Min tap duration (e.g. 3 samples = 15 ms). */
+    uint16_t tapMaxDurationSamples;         /* Max tap duration (e.g. 70 samples = 350 ms, rejects holds). */
+    uint16_t tapCooldownSamples;            /* Refractory lockout after tap (e.g. 25 samples = 125 ms). */
+    uint16_t tapSquelchTimerSamples;        /* Disturbance squelch lockout (e.g. 50 samples = 250 ms). */
+    uint16_t tapSquelchQuietSamples;        /* Continuous calm required to exit squelch (e.g. 15 samples = 75 ms). */
+    int16_t tapBipolarMinRaw;               /* Minimum raw excursion required (e.g. -500 LSB). */
+    int16_t tapBipolarMaxRaw;               /* Maximum raw excursion required (e.g. +500 LSB). */
+    uint8_t tapAdaptiveBaselineEnable;      /* 1: enable adaptive baseline envelope filter, 0: static thresholds. */
+    int32_t tapPressDeltaRaw;               /* Dynamic contact delta above baseline (e.g. 1100 LSB). */
+    int32_t tapReleaseDeltaRaw;             /* Dynamic release delta above baseline (e.g. 600 LSB). */
+    int32_t tapMinPeakActRaw;               /* Minimum activity peak required for tap (e.g. 3300 LSB). */
+    float tapAlphaRise;                     /* EMA rise factor (e.g. 0.999f = slow rise during contact). */
+    float tapAlphaFall;                     /* EMA fall factor (e.g. 0.988f = fast fall when calm). */
 } qvar_app_config_t;
 
 /* App off: QVAR app does not start sensing. */
@@ -147,7 +162,22 @@ typedef struct {
     .qvar1ButtonHoldTimeMs = 800u,                         \
     .qvar1ButtonDoubleTapWindowMs = 300u,                  \
     .qvar1ButtonTouchConfirmSamples = 3u,                  \
-    .qvar1ButtonReleaseConfirmSamples = 2u                 \
+    .qvar1ButtonReleaseConfirmSamples = 2u,                \
+    .tapPressThresholdRaw = 3300L,                         \
+    .tapReleaseThresholdRaw = 2650L,                       \
+    .tapMinDurationSamples = 3u,                           \
+    .tapMaxDurationSamples = 70u,                          \
+    .tapCooldownSamples = 25u,                             \
+    .tapSquelchTimerSamples = 50u,                         \
+    .tapSquelchQuietSamples = 15u,                         \
+    .tapBipolarMinRaw = -500,                              \
+    .tapBipolarMaxRaw = 500,                               \
+    .tapAdaptiveBaselineEnable = 1u,                       \
+    .tapPressDeltaRaw = 1100L,                             \
+    .tapReleaseDeltaRaw = 600L,                            \
+    .tapMinPeakActRaw = 3300L,                             \
+    .tapAlphaRise = 0.99917f,                              \
+    .tapAlphaFall = 0.9875f                                \
 }
 
 /* QVAR2 wear only; QVAR1 button disabled. */
