@@ -63,9 +63,9 @@ int imu_raw_qvar_start(ism330bx_ah_qvar_zin_t zin) {
     ism330bx_xl_data_rate_set(&sImuCtx, ISM330BX_XL_ODR_OFF);
     ism330bx_gy_data_rate_set(&sImuCtx, ISM330BX_GY_ODR_OFF);
 
-    // Completely DISABLE all hardware filters (no HPF, no LPF - 100% raw analog reading)
+    // Hardware filter configuration: HPF enabled to eliminate DC drift, LPF disabled
     ism330bx_filt_ah_qvar_conf_t filter = {0};
-    filter.hpf = 0u;
+    filter.hpf = 1u;
     filter.lpf = 0u;
     ism330bx_filt_ah_qvar_conf_set(&sImuCtx, filter);
 

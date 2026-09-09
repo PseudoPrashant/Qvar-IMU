@@ -18,7 +18,7 @@
 #define I2C_MASTER_FREQ_HZ          400000
 
 /* Hardware AFE configuration */
-#define RAW_QVAR_ZIN                ISM330BX_2400MOhm  /* 2400 MOhm (maximum sensitivity) */
+#define RAW_QVAR_ZIN                ISM330BX_235MOhm   /* 235 MOhm input impedance (lowest, maximum noise immunity) */
 #define RAW_SAMPLE_PERIOD_MS        10u                /* 10 ms = 100 Hz sampling rate */
 
 static void i2c_master_init(void) {
@@ -50,7 +50,7 @@ void app_main(void) {
         printf("[!] Error: Failed to start QVAR analog front-end.\r\n");
         return;
     }
-    printf("[+] Raw QVAR AFE started (Zin=2400M, Filters=NONE [HPF=0, LPF=0], 100 Hz).\r\n");
+    printf("[+] Raw QVAR AFE started (Zin=235M, Filters=[HPF=1, LPF=0], 100 Hz).\r\n");
     printf("[+] Streaming raw 16-bit register samples directly to UART0...\r\n\r\n");
 
     TickType_t xLastWakeTime = xTaskGetTickCount();
