@@ -75,3 +75,6 @@ The firmware includes a time-gated, band-pass state machine designed to detect f
 - When $	ext{Activity} < 3,500	ext{ LSB}$ for 10 consecutive samples ($50	ext{ ms}$), the event closes.
 - If `Valid == true` and active duration $\ge 40	ext{ ms}$, emits `[IMU QVAR TAP] #N dur=... peak=...`.
 - Enforces $150	ext{ ms}$ lockout before next event can begin.
+
+### Onboard LED Visual Tap Indicator (GPIO 2):
+Whenever a valid tap event is confirmed, the firmware pulses the onboard blue LED on `GPIO 2` (`GPIO_NUM_2`) for $150	ext{ ms}$ (30 samples @ 200 Hz). The pulse is handled non-blockingly within the periodic sampling loop with zero jitter or latency to QVAR sensor reading.

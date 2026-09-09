@@ -15,6 +15,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/i2c.h"
+#include "driver/gpio.h"
 #include "imu.h"
 
 #define I2C_MASTER_SCL_IO           22      
@@ -63,6 +64,10 @@ static inline int32_t qvar_envelope_extractor_update(qvar_envelope_extractor_t *
 #define TAP_BRIDGE_TIMER_SAMPLES  10u     /* 50 ms bridge timer at 200 Hz */
 #define TAP_MIN_DUR_SAMPLES       8u      /* 40 ms min duration at 200 Hz */
 #define TAP_LOCKOUT_SAMPLES       30u     /* 150 ms lockout cooldown at 200 Hz */
+#define TAP_LED_GPIO              GPIO_NUM_2
+#define TAP_LED_PULSE_SAMPLES     30u     /* 150 ms pulse @ 200 Hz */
+
+static uint16_t sLedTimer = 0u;
 
 typedef enum {
     TAP_STATE_IDLE = 0,
@@ -166,6 +171,9 @@ static void i2c_master_init(void) {
 
 void app_main(void) {
     i2c_master_init();
+    gpio_reset_pin(TAP_LED_GPIO);
+    gpio_set_direction(TAP_LED_GPIO, GPIO_MODE_OUTPUT);
+    gpio_set_level(TAP_LED_GPIO, 0);
     printf("\r\n=======================================================\r\n");
     printf("   ISM330BX 200 HZ RAW & ROBUST TAP DETECTOR FIRMWARE\r\n");
     printf("=======================================================\r\n");
@@ -190,12 +198,22 @@ void app_main(void) {
     int16_t q1_raw = 0;
 
     while (1) {
+        /* Non-blocking LED pulse timer */
+        if (sLedTimer > 0u) {
+            sLedTimer--;
+            if (sLedTimer == 0u) {
+                gpio_set_level(TAP_LED_GPIO, 0);
+            }
+        }
+
         if (imu_raw_qvar_read(&q1_raw) == 0) {
             sample_idx++;
             int32_t q1_act = qvar_envelope_extractor_update(&sEnvQ1, q1_raw);
 
             /* Time-Gated Band-Pass State Machine Tap Detector check */
             if (robust_tap_detector_update(&sTapDetector, sample_idx, q1_raw, q1_act) != 0u) {
+                gpio_set_level(TAP_LED_GPIO, 1);
+                sLedTimer = TAP_LED_PULSE_SAMPLES;
                 printf("[IMU QVAR TAP] #%lu dur=%lu ms peak=%ld LSB\r\n",
                        (unsigned long)sTapDetector.tap_count,
                        (unsigned long)sTapDetector.last_tap_dur_ms,

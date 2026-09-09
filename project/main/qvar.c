@@ -10,6 +10,7 @@
 #include "imu.h"
 #include "imu_internal.h"
 #include "ism330bx_reg.h"
+#include "driver/gpio.h"
 #include <stddef.h>
 #include <stdio.h>
 
@@ -546,6 +547,22 @@ typedef struct {
 
 static robust_tap_detector_t sRobustTapDetector = {0};
 static uint32_t sTapSampleIndex = 0u;
+
+#define TAP_LED_GPIO              GPIO_NUM_2
+#define TAP_LED_PULSE_SAMPLES     30u  /* 150 ms @ 200 Hz */
+
+static uint16_t sLedTimer = 0u;
+static uint8_t sLedInitialized = 0u;
+
+static void tap_led_init(void)
+{
+    if (sLedInitialized == 0u) {
+        gpio_reset_pin(TAP_LED_GPIO);
+        gpio_set_direction(TAP_LED_GPIO, GPIO_MODE_OUTPUT);
+        gpio_set_level(TAP_LED_GPIO, 0);
+        sLedInitialized = 1u;
+    }
+}
 
 static void robust_tap_detector_reset(robust_tap_detector_t *det)
 {
@@ -1108,11 +1125,25 @@ void imu_qvar_app_task(void)
     }
 
     /* Time-Gated Band-Pass State Machine Tap Detector Evaluation */
+    tap_led_init();
+
+    /* Manage non-blocking LED pulse timer */
+    if (sLedTimer > 0u) {
+        sLedTimer--;
+        if (sLedTimer == 0u) {
+            gpio_set_level(TAP_LED_GPIO, 0);
+        }
+    }
+
     sTapSampleIndex++;
     if (raw.qvar1Valid != 0u)
     {
         if (robust_tap_detector_update(&sRobustTapDetector, sTapSampleIndex, q1_raw_in, q1_act, &sQvarAppConfig))
         {
+            /* Flash onboard LED for 150 ms */
+            gpio_set_level(TAP_LED_GPIO, 1);
+            sLedTimer = TAP_LED_PULSE_SAMPLES;
+
             printf("[IMU QVAR] TAP DETECTED #%lu (dur=%lu ms, peak=%ld LSB / %.1f mV)\r\n",
                    (unsigned long)sRobustTapDetector.tap_count,
                    (unsigned long)sRobustTapDetector.last_tap_dur_ms,

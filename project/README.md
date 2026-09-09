@@ -189,3 +189,6 @@ The production firmware integrates a time-gated, band-pass state machine designe
   ```
 - Enforces $150\text{ ms}$ lockout cooldown before re-arming.
 
+### Onboard LED Visual Tap Indicator (GPIO 2):
+Whenever a valid tap event is confirmed, the firmware pulses the onboard blue LED on `GPIO 2` (`GPIO_NUM_2`) for $150\text{ ms}$ (30 samples @ 200 Hz). The pulse is handled non-blockingly within the periodic sampling loop with zero jitter or latency to QVAR sensor reading.
+
