@@ -24,14 +24,14 @@
 
 /* Hardware AFE configuration */
 #define RAW_QVAR_ZIN                ISM330BX_235MOhm   /* 235 MOhm input impedance (lowest, maximum noise immunity) */
-#define RAW_SAMPLE_PERIOD_MS        4u                 /* 4 ms = 250 Hz sampling rate (matches 240 Hz sensor ODR) */
+#define RAW_SAMPLE_PERIOD_MS        5u                 /* 5 ms = 200 Hz sampling rate */
 
 /* 5-Sample Sliding Window Peak-to-Peak Envelope Extractor:
  * Activity[n] = max(x[n..n-4]) - min(x[n..n-4])
  * Spans 5 * 4 ms = 20.0 ms (exactly 1 period of 50 Hz powerline hum).
  * Captures the absolute peak-to-peak amplitude regardless of phase alignment.
  */
-#define ENVELOPE_WINDOW_SIZE        5u
+#define ENVELOPE_WINDOW_SIZE        4u                 /* 4 samples * 5 ms = 20.0 ms (1 full cycle of 50 Hz mains) */
 
 typedef struct {
     int16_t window[ENVELOPE_WINDOW_SIZE];
@@ -100,13 +100,9 @@ void app_main(void) {
             sample_idx++;
             int32_t q1_act = qvar_envelope_extractor_update(&sEnvQ1, q1_raw);
 
-            /* ST AN5755 voltage scaling: 78 LSB / mV */
-            float mv_raw = (float)q1_raw / 78.0f;
-            float mv_act = (float)q1_act / 78.0f;
-
-            /* Dual telemetry format */
-            printf("[IMU QVAR RAW] Q1=%d Q1_ACT=%ld Q2=NA (%.2f mV, act: %.2f mV) #%lu\r\n",
-                   (int)q1_raw, (long)q1_act, mv_raw, mv_act, (unsigned long)sample_idx);
+            /* Streamlined dual telemetry format to eliminate UART buffer saturation at 200 Hz */
+            printf("[IMU QVAR RAW] Q1=%d Q1_ACT=%ld #%lu\r\n",
+                   (int)q1_raw, (long)q1_act, (unsigned long)sample_idx);
         }
 
         vTaskDelayUntil(&xLastWakeTime, xPeriod);

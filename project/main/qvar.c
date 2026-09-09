@@ -474,12 +474,12 @@ HAL_StatusTypeDef imu_qvar_print_raw(void)
     return HAL_OK;
 }
 
-/* 5-Sample Sliding Window Peak-to-Peak Envelope Extractor:
- * Activity[n] = max(x[n..n-4]) - min(x[n..n-4])
- * Spans 5 * 4 ms = 20.0 ms (exactly 1 full period of 50 Hz powerline hum at 250 Hz).
+/* 4-Sample Sliding Window Peak-to-Peak Envelope Extractor:
+ * Activity[n] = max(x[n..n-3]) - min(x[n..n-3])
+ * Spans 4 * 5 ms = 20.0 ms (exactly 1 full period of 50 Hz powerline hum at 200 Hz).
  * Captures the absolute peak-to-peak amplitude regardless of phase alignment.
  */
-#define ENVELOPE_WINDOW_SIZE 5u
+#define ENVELOPE_WINDOW_SIZE 4u
 
 typedef struct {
     int16_t window[ENVELOPE_WINDOW_SIZE];

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 r"""
-240 Hz Raw & 5-Sample Peak-to-Peak Activity Envelope Plotter & CSV Logger
+200 Hz Raw & 4-Sample Peak-to-Peak Activity Envelope Plotter & CSV Logger
 =========================================================================
-Real-time oscilloscope visualizer for ISM330BX QVAR telemetry streaming at 240/250 Hz.
+Real-time oscilloscope visualizer for ISM330BX QVAR telemetry streaming at 200 Hz.
 Displays:
-  - Cyan Trace: Raw Q1 Signal (showing high-resolution 240 Hz AC waveform)
-  - Amber Gold Trace: 5-Sample Peak-to-Peak Activity Envelope (solid unipolar touch pulse)
+  - Cyan Trace: Raw Q1 Signal (showing high-resolution 200 Hz AC waveform)
+  - Amber Gold Trace: 4-Sample Peak-to-Peak Activity Envelope (solid unipolar touch pulse)
 
 Features:
   - Live Serial Streaming: Reads from COM7 (or user-specified port) in real time.
@@ -63,7 +63,7 @@ class DualQ1SerialReader:
         os.makedirs(self.data_dir, exist_ok=True)
         if not csv_filename:
             ts = time.strftime("%Y%m%d_%H%M%S")
-            csv_filename = f"q1_env240_{ts}.csv"
+            csv_filename = f"q1_env200_{ts}.csv"
         self.csv_path = os.path.join(self.data_dir, csv_filename)
         self.csv_file = None
         self.csv_writer = None
@@ -75,7 +75,7 @@ class DualQ1SerialReader:
                 "q1_raw", "q1_voltage_mv", "q1_activity", "q1_activity_mv"
             ])
             self.csv_file.flush()
-            print(f"[+] Recording dual-channel 240 Hz telemetry to CSV: {self.csv_path}")
+            print(f"[+] Recording dual-channel 200 Hz telemetry to CSV: {self.csv_path}")
         except Exception as e:
             print(f"[!] Warning: Failed to initialize CSV logging: {e}")
 
@@ -187,25 +187,25 @@ def plot_live(port, baud, window_size, ylim=None, data_dir=None, csv_filename=No
     # Styling
     plt.style.use("dark_background")
     fig, ax = plt.subplots(figsize=(12, 6.5))
-    fig.canvas.manager.set_window_title(f"QVAR 240 Hz Envelope Extractor - {port}")
+    fig.canvas.manager.set_window_title(f"QVAR 200 Hz Envelope Extractor - {port}")
     fig.patch.set_facecolor("#0b0f19")
     ax.set_facecolor("#111827")
 
     # Trace 1: Raw Q1 in semi-transparent cyan
-    (line_raw,) = ax.plot([], [], color="#00e5ff", alpha=0.45, linewidth=1.2, label="Q1 Raw (240 Hz AC Wave)")
+    (line_raw,) = ax.plot([], [], color="#00e5ff", alpha=0.45, linewidth=1.2, label="Q1 Raw (200 Hz AC Wave)")
 
-    # Trace 2: 5-Sample Peak-to-Peak Activity Envelope in Amber Gold
-    (line_act,) = ax.plot([], [], color="#fbbf24", linewidth=2.4, label="Q1 Activity Envelope (5-Sample P2P)")
+    # Trace 2: 4-Sample Peak-to-Peak Activity Envelope in Amber Gold
+    (line_act,) = ax.plot([], [], color="#fbbf24", linewidth=2.4, label="Q1 Activity Envelope (4-Sample P2P)")
 
     # Zero baseline reference
     ax.axhline(0, color="#64748b", linestyle="-", alpha=0.4, linewidth=0.8, label="Zero Baseline")
 
     # Threshold guide (e.g. 3,500 LSB for touch detection)
-    thresh_line = ax.axhline(3500, color="#f87171", linestyle="--", alpha=0.6, linewidth=1.0, label="Touch Threshold (3500 LSB)")
+    thresh_line = ax.axhline(3000, color="#f87171", linestyle="--", alpha=0.6, linewidth=1.0, label="Touch Threshold (3000 LSB)")
 
     # Grid and styling
     ax.grid(True, linestyle="--", alpha=0.25, color="#475569")
-    ax.set_xlabel("Sample Index (240/250 Hz = ~4 ms / sample)", color="#94a3b8", fontsize=11, labelpad=8)
+    ax.set_xlabel("Sample Index (200 Hz = 5 ms / sample)", color="#94a3b8", fontsize=11, labelpad=8)
     ax.set_ylabel("Amplitude (LSB)", color="#94a3b8", fontsize=11, labelpad=8)
     ax.tick_params(colors="#64748b", labelsize=10)
     for spine in ax.spines.values():
@@ -274,13 +274,13 @@ def plot_live(port, baud, window_size, ylim=None, data_dir=None, csv_filename=No
         latest_act = disp_act[-1]
         raw_mv = latest_raw / 78.0
         act_mv = latest_act / 78.0
-        is_touch = latest_act >= 3500
+        is_touch = latest_act >= 3000
         state_str = "ACTIVE TOUCH DETECTED" if is_touch else "IDLE (NO TOUCH)"
         csv_basename = os.path.basename(csv_path) if csv_path else "None"
 
         hud_text.set_text(
             f"Raw Q1   : {latest_raw:+6d} LSB ({raw_mv:+6.1f} mV)\n"
-            f"Activity : {latest_act:6d} LSB ({act_mv:5.1f} mV) [5-Sample P2P Envelope]\n"
+            f"Activity : {latest_act:6d} LSB ({act_mv:5.1f} mV) [4-Sample P2P Envelope]\n"
             f"Status   : {state_str}\n"
             f"Logging  : data/{csv_basename} ({total_samples:,} samples @ 250 Hz)"
         )
@@ -346,9 +346,9 @@ def plot_csv_file(csv_path):
         ax.plot(xs, act_ys, color="#fbbf24", linewidth=2.0, label="Q1 Activity Envelope (P2P)")
 
     ax.axhline(0, color="#64748b", linestyle="-", alpha=0.4, linewidth=0.8, label="Zero Baseline")
-    ax.axhline(3500, color="#f87171", linestyle="--", alpha=0.6, linewidth=1.0, label="Touch Threshold (3500 LSB)")
+    ax.axhline(3000, color="#f87171", linestyle="--", alpha=0.6, linewidth=1.0, label="Touch Threshold (3000 LSB)")
     ax.grid(True, linestyle="--", alpha=0.25, color="#475569")
-    ax.set_xlabel("Sample Index (240/250 Hz = ~4 ms / sample)", color="#94a3b8", fontsize=11)
+    ax.set_xlabel("Sample Index (200 Hz = 5 ms / sample)", color="#94a3b8", fontsize=11)
     ax.set_ylabel("Amplitude (LSB)", color="#94a3b8", fontsize=11)
     ax.legend(loc="upper right", facecolor="#1e293b", edgecolor="#475569")
     plt.tight_layout()
@@ -356,7 +356,7 @@ def plot_csv_file(csv_path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Live 240 Hz Dual-Trace Oscilloscope & CSV Logger for ISM330BX QVAR")
+    parser = argparse.ArgumentParser(description="Live 200 Hz Dual-Trace Oscilloscope & CSV Logger for ISM330BX QVAR")
     parser.add_argument("csv_file", nargs="?", default=None, help="Path to CSV file to view")
     parser.add_argument("--port", default="COM7", help="Serial port (default: COM7)")
     parser.add_argument("--baud", type=int, default=115200, help="Baud rate (default: 115200)")

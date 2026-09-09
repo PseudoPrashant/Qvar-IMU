@@ -33,7 +33,7 @@ void app_main(void) {
 
     printf("Starting QVAR Polling Task...\n");
     TickType_t xLastWakeTime = xTaskGetTickCount();
-    const TickType_t xPeriod = pdMS_TO_TICKS(4);
+    const TickType_t xPeriod = pdMS_TO_TICKS(5); /* 5 ms = 200 Hz */
 
     while (1) {
         imu_qvar_app_task();

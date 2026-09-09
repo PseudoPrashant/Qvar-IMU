@@ -128,7 +128,7 @@ typedef struct {
     .enable = 1u,                                          \
     .rawLogEnable = 1u,                                    \
     .qvarConfig = QVAR_CONFIG_BUTTON_Q1_ONLY,              \
-    .readPeriodMs = 10u,                                   \
+    .readPeriodMs = 5u,                                    \
     .startupSettleMs = 1000u,                              \
     .baselineSamples = 50u,                                \
     .baselineTrackDiv = 8L,                                \
@@ -140,9 +140,9 @@ typedef struct {
     .qvar2WearReleaseRaw = 250L,                           \
     .qvar2WearOnConfirmMs = 500u,                          \
     .qvar2WearOffConfirmMs = 1500u,                        \
-    .qvar1ButtonThresholdRaw = 200L,                       \
-    .qvar1ButtonReleaseRaw = 100L,                         \
-    .qvar1ButtonMinPeakRaw = 200L,                         \
+    .qvar1ButtonThresholdRaw = 2800L,                      \
+    .qvar1ButtonReleaseRaw = 2200L,                        \
+    .qvar1ButtonMinPeakRaw = 3000L,                        \
     .qvar1ButtonMaxPressMs = 400u,                         \
     .qvar1ButtonHoldTimeMs = 800u,                         \
     .qvar1ButtonDoubleTapWindowMs = 300u,                  \
