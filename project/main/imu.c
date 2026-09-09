@@ -77,8 +77,8 @@ void imu_internal_qvar_restore_motion_if_needed(void) {
     // 2. Set Accelerometer to High-Performance mode
     ism330bx_xl_mode_set(&sImuCtx, ISM330BX_XL_HIGH_PERFORMANCE_MD);
     
-    // 3. Turn on the Accelerometer at 120Hz
-    ism330bx_xl_data_rate_set(&sImuCtx, ISM330BX_XL_ODR_AT_120Hz);
+    // 3. Turn on the Accelerometer at 240Hz
+    ism330bx_xl_data_rate_set(&sImuCtx, ISM330BX_XL_ODR_AT_240Hz);
 }
 
 static uint8_t sInt2Pending = 0;

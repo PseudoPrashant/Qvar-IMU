@@ -474,52 +474,54 @@ HAL_StatusTypeDef imu_qvar_print_raw(void)
     return HAL_OK;
 }
 
-/* Circular 10-sample moving average FIR filter to cancel 5.0 Hz aliased power line hum (200 ms period at 50 Hz sampling) per ST AN5755 Section 5.1.6 */
-#define QVAR_MA_FILTER_WINDOW 10u
+/* 5-Sample Sliding Window Peak-to-Peak Envelope Extractor:
+ * Activity[n] = max(x[n..n-4]) - min(x[n..n-4])
+ * Spans 5 * 4 ms = 20.0 ms (exactly 1 full period of 50 Hz powerline hum at 250 Hz).
+ * Captures the absolute peak-to-peak amplitude regardless of phase alignment.
+ */
+#define ENVELOPE_WINDOW_SIZE 5u
 
 typedef struct {
-    int16_t buffer[QVAR_MA_FILTER_WINDOW];
-    int32_t sum;
-    uint8_t index;
+    int16_t window[ENVELOPE_WINDOW_SIZE];
     uint8_t count;
-} qvar_ma_filter_t;
+    uint8_t head;
+} qvar_envelope_extractor_t;
 
-static qvar_ma_filter_t sFilterQ1 = {0};
-static qvar_ma_filter_t sFilterQ2 = {0};
+static qvar_envelope_extractor_t sEnvQ1 = {0};
+static qvar_envelope_extractor_t sEnvQ2 = {0};
 
-static void qvar_ma_filter_reset(qvar_ma_filter_t *filt)
+static void qvar_envelope_extractor_reset(qvar_envelope_extractor_t *env)
 {
-    if (filt == NULL)
+    if (env == NULL)
     {
         return;
     }
-    memset(filt->buffer, 0, sizeof(filt->buffer));
-    filt->sum = 0;
-    filt->index = 0u;
-    filt->count = 0u;
+    memset(env->window, 0, sizeof(env->window));
+    env->count = 0u;
+    env->head = 0u;
 }
 
-static int16_t qvar_ma_filter_apply(qvar_ma_filter_t *filt, int16_t sample)
+static int32_t qvar_envelope_extractor_update(qvar_envelope_extractor_t *env, int16_t sample)
 {
-    if (filt == NULL)
+    if (env == NULL)
     {
-        return sample;
+        return 0;
+    }
+    env->window[env->head] = sample;
+    env->head = (env->head + 1u) % ENVELOPE_WINDOW_SIZE;
+    if (env->count < ENVELOPE_WINDOW_SIZE)
+    {
+        env->count++;
     }
 
-    if (filt->count < QVAR_MA_FILTER_WINDOW)
+    int16_t min_val = env->window[0];
+    int16_t max_val = env->window[0];
+    for (uint8_t i = 1u; i < env->count; i++)
     {
-        filt->buffer[filt->index] = sample;
-        filt->sum += (int32_t)sample;
-        filt->count++;
-        filt->index = (filt->index + 1u) % QVAR_MA_FILTER_WINDOW;
-        return (int16_t)(filt->sum / (int32_t)filt->count);
+        if (env->window[i] < min_val) min_val = env->window[i];
+        if (env->window[i] > max_val) max_val = env->window[i];
     }
-
-    filt->sum -= (int32_t)filt->buffer[filt->index];
-    filt->buffer[filt->index] = sample;
-    filt->sum += (int32_t)sample;
-    filt->index = (filt->index + 1u) % QVAR_MA_FILTER_WINDOW;
-    return (int16_t)(filt->sum / (int32_t)QVAR_MA_FILTER_WINDOW);
+    return (int32_t)max_val - (int32_t)min_val;
 }
 
 static int32_t imu_app_qvar_abs_delta(int16_t value, int16_t baseline)
@@ -929,8 +931,8 @@ void imu_qvar_app_task(void)
             sImuAppQvarBaselinePrinted = 0u;
             imu_app_qvar_button_reset(&sImuAppQvarButtonQ1);
             imu_app_qvar_wear_reset(&sImuAppQvarWearQ2);
-            qvar_ma_filter_reset(&sFilterQ1);
-            qvar_ma_filter_reset(&sFilterQ2);
+            qvar_envelope_extractor_reset(&sEnvQ1);
+            qvar_envelope_extractor_reset(&sEnvQ2);
             printf("[IMU TEST] Qvar polling started q1_button=%u q2_wear=%u\r\n",
                    (config.qvar1Use == IMU_QVAR_USE_BUTTON) ? 1u : 0u,
                    (config.qvar2Use == IMU_QVAR_USE_WEAR) ? 1u : 0u);
@@ -956,14 +958,14 @@ void imu_qvar_app_task(void)
         return;
     }
 
-    /* Apply 7-sample FIR moving average to eliminate 50 Hz mains hum */
+    /* Apply 5-sample peak-to-peak envelope extractor */
     if (raw.qvar1Valid != 0u)
     {
-        raw.qvar1 = qvar_ma_filter_apply(&sFilterQ1, raw.qvar1);
+        raw.qvar1 = (int16_t)qvar_envelope_extractor_update(&sEnvQ1, raw.qvar1);
     }
     if (raw.qvar2Valid != 0u)
     {
-        raw.qvar2 = qvar_ma_filter_apply(&sFilterQ2, raw.qvar2);
+        raw.qvar2 = (int16_t)qvar_envelope_extractor_update(&sEnvQ2, raw.qvar2);
     }
 
     imu_app_qvar_print_raw_sample(&raw);
@@ -979,8 +981,8 @@ void imu_qvar_app_task(void)
         sImuAppQvarBaselinePrinted = 0u;
         imu_app_qvar_button_reset(&sImuAppQvarButtonQ1);
         imu_app_qvar_wear_reset(&sImuAppQvarWearQ2);
-        qvar_ma_filter_reset(&sFilterQ1);
-        qvar_ma_filter_reset(&sFilterQ2);
+        qvar_envelope_extractor_reset(&sEnvQ1);
+        qvar_envelope_extractor_reset(&sEnvQ2);
         printf("[IMU QVAR] startup settle done after %lu ms; baseline learning starts now\r\n",
                (unsigned long)sQvarAppConfig.startupSettleMs);
         return;

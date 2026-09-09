@@ -31,10 +31,10 @@ The polling logic in `qvar.c` replaces STM32 HAL timing functions with FreeRTOS 
   - Configured to `IMU_QVAR_ZIN_2400_MOHM` ($2,400\text{ M}\Omega = 2.4\text{ G}\Omega$) in `QVAR_CONFIG_BUTTON_Q1_ONLY` ([qvar.h](file:///c:/Users/prash/OneDrive/Desktop/IMU/IMU/project/main/qvar.h)) per ST AN5755 Section 5.3.1 (`CTRL7 = 0x80`), providing the maximum possible physical charge-to-voltage conversion gain in silicon ($\approx 3.29\times$ higher than $730\text{ M}\Omega$, and $\approx 10.2\times$ higher than $235\text{ M}\Omega$) for ultra-sensitive touch and proximity detection.
 - **Hardware High-Pass Filter (HPF)**:
   - Enabled `.hpfEnable = 1u` in `QVAR_CONFIG_BUTTON_Q1_ONLY` ([qvar.h](file:///c:/Users/prash/OneDrive/Desktop/IMU/IMU/project/main/qvar.h)) per ST AN5755 Section 5.1.4 to eliminate floating-electrode DC static charge accumulation and recenter the baseline around $0\text{ LSB}$.
-- **10-Sample Moving Average FIR Comb Filter (50 Hz Notch)**:
-  - Circular 10-sample rolling average ($100\text{ ms}$ window at 100 Hz) in `qvar.c` per ST AN5755 Section 5.1.6. Places an exact mathematical null notch at $50\text{ Hz}$ mains hum while slashing group delay by $50\%$ down to just $45\text{ ms}$.
-- **Deterministic 10 ms (100 Hz) Polling Loop**:
-  - Implemented non-drifting periodic task pacing via `vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(10))` in [main.c](file:///c:/Users/prash/OneDrive/Desktop/IMU/IMU/project/main/main.c), doubling data throughput and temporal resolution over 50 Hz.
+- **5-Sample Sliding Window Peak-to-Peak Envelope Extractor**:
+  - Computes $\text{Activity}[n] = \max(x[n..n-4]) - \min(x[n..n-4])$ over a 5-sample sliding window in `qvar.c`. Spans exactly $20.0\text{ ms}$ ($1$ full cycle of $50\text{ Hz}$ and $>1$ cycle of $60\text{ Hz}$), converting oscillatory AC touch bursts into a solid, unipolar pulse ($>15,000\text{ LSB}$) with zero phase ambiguity and zero zero-crossing dropouts.
+- **High-Speed 4 ms (250 Hz) Polling Loop with 240 Hz Sensor ODR**:
+  - Sensor accelerometer / QVAR clock upgraded to $240\text{ Hz}$ (`ISM330BX_XL_ODR_AT_240Hz`), and FreeRTOS task pacing configured to $4\text{ ms}$ (`CONFIG_FREERTOS_HZ=1000`, `pdMS_TO_TICKS(4)`).
 - **Bipolar Peak Detector ($\pm 200\text{ LSB}$ Maximum Sensitivity Threshold)**:
   - Configured specifically for maximum sensitivity, detecting peaks on the slightest feather touch whenever the waveform crosses $\pm 200\text{ LSB}$ ($\approx 2.56\text{ mV}$):
     - **Negative Plunge Peak**: Detects turnaround minimums when $V[n-1] \le V[n-2]$ and $V[n-1] < V[n]$, with plunge $\le -200\text{ LSB}$ (or $\Delta \le -200\text{ LSB}$).

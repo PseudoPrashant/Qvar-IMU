@@ -82,7 +82,7 @@ int imu_raw_qvar_start(ism330bx_ah_qvar_zin_t zin) {
     // Restore Accelerometer in High-Performance mode at 120 Hz (required by QVAR engine)
     ism330bx_xl_full_scale_set(&sImuCtx, ISM330BX_2g);
     ism330bx_xl_mode_set(&sImuCtx, ISM330BX_XL_HIGH_PERFORMANCE_MD);
-    ism330bx_xl_data_rate_set(&sImuCtx, ISM330BX_XL_ODR_AT_120Hz);
+    ism330bx_xl_data_rate_set(&sImuCtx, ISM330BX_XL_ODR_AT_240Hz);
 
     return 0;
 }

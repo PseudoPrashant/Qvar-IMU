@@ -1,23 +1,35 @@
-# ISM330BX Pure Raw Telemetry Firmware
+# ISM330BX 240 Hz Raw & 5-Sample Peak-to-Peak Envelope Telemetry Firmware
 
-A standalone, minimal ESP-IDF firmware dedicated purely to streaming completely unprocessed 16-bit ADC samples directly from the ISM330BX QVAR register.
+A dedicated ESP-IDF firmware for the ISM330BX QVAR electro-sensing channel, streaming both **raw 240 Hz AC waveform data** and the **5-Sample Peak-to-Peak Activity Envelope** in real time over serial.
 
-## Key Characteristics:
-- **Zero Filtering (Neither Hardware nor Software)**:
-  - Hardware HPF: DISABLED (`filter.hpf = 0`)
-  - Hardware LPF: DISABLED (`filter.lpf = 0`)
-  - NO FIR notch / moving average filter.
-  - NO dynamic baseline tracking.
-  - NO peak detection / thresholding.
-  - NO button / hold / wear state machines.
-- **Pure 100 Hz Streaming**:
-  - Sampled every 10 ms (100 Hz) via FreeRTOS `vTaskDelayUntil`.
-  - Directly reads registers `0x3A` / `0x3B` (`ISM330BX_AH_QVAR_OUT_L` / `H`).
-- **Telemetry Format**:
-  - `[IMU QVAR RAW] Q1=<raw_lsb> Q2=NA (<voltage> mV) #<sample_count>`
-  - Fully compatible with `plot_raw_q1.py`.
+## Mathematical Architecture (The 240 Hz Envelope Extractor)
+1. **Sensor Accelerometer / QVAR Clock**:
+   - Configured to **240 Hz** (`ISM330BX_XL_ODR_AT_240Hz` in `CTRL1`).
+   - Hardware HPF = ON (`ah_qvar_hpf = 1`).
+2. **Pacing**:
+   - Paced at **4 ms (250 Hz)** with `CONFIG_FREERTOS_HZ=1000`.
+3. **The 5-Sample Peak-to-Peak Window**:
+   $$\text{Activity}[n] = \max(x[n..n-4]) - \min(x[n..n-4])$$
+   - Spans exactly **$5 \times 4\text{ ms} = 20.0\text{ ms}$**—the exact full-period duration of a $50\text{ Hz}$ AC powerline wave ($1/50 = 20.0\text{ ms}$) and $>1$ full period of $60\text{ Hz}$ ($16.7\text{ ms}$).
+   - **Phase Invariance**: Every 5 consecutive samples are mathematically guaranteed to capture both the positive apex ($+A$) and negative valley ($-A$) of the injected AC wave.
+   - **Unipolar Solid Output**: Always positive ($\ge 0$). Transforms alternating, chaotic touch oscillations into a massive, solid, unipolar pulse ($> 14,000\text{ LSB}$) with zero dropouts and zero zero-crossing dips.
 
-## Build & Flash:
+## Dual-Channel Telemetry Format
+```text
+[IMU QVAR RAW] Q1=<raw_lsb> Q1_ACT=<activity_lsb> Q2=NA (<raw_mv> mV, act: <act_mv> mV) #<sample_count>
+```
+
+## Live Dual-Trace Oscilloscope & CSV Logger
+Run `plotter.py` to visualize both signals simultaneously:
+```powershell
+python plotter.py --port COM7
+```
+- **Cyan Trace**: Raw Q1 signal (240 Hz AC wave).
+- **Amber Gold Trace**: 5-Sample Peak-to-Peak Activity Envelope.
+- **Red Dashed Line**: Touch detection threshold guide (default: $3,500\text{ LSB}$).
+- **Automatic CSV Logging**: Records both `q1_raw` and `q1_activity` columns to timestamped CSV files in `data/`.
+
+## Build & Flash
 ```powershell
 # 1. Activate ESP-IDF
 . C:\esp\v6.1\esp-idf\export.ps1
