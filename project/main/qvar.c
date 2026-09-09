@@ -716,7 +716,7 @@ static void imu_app_qvar_button_process_q1(imu_app_qvar_button_channel_t *channe
                                            uint32_t now_ms,
                                            uint8_t button_allowed)
 {
-    int32_t delta;
+    int32_t delta_curr;
     int32_t delta_p1;
     int16_t v_curr;
     int16_t v_p1;
@@ -758,37 +758,43 @@ static void imu_app_qvar_button_process_q1(imu_app_qvar_button_channel_t *channe
     v_curr = value;
     v_p1 = channel->v_prev1;
     v_p2 = channel->v_prev2;
-    delta = (int32_t)channel->baseline - (int32_t)v_curr;
+    delta_curr = (int32_t)v_curr - (int32_t)channel->baseline;
+    delta_p1 = (int32_t)v_p1 - (int32_t)channel->baseline;
 
-    /* Dynamic baseline tracking when idle (not deep in a plunge) */
-    if (delta < sQvarAppConfig.qvar1ButtonThresholdRaw)
+    /* Dynamic baseline tracking when idle (within +-600 LSB) */
+    if ((delta_curr > -sQvarAppConfig.qvar1ButtonThresholdRaw) &&
+        (delta_curr < sQvarAppConfig.qvar1ButtonThresholdRaw))
     {
         channel->baseline = imu_app_qvar_track_baseline(channel->baseline, v_curr);
     }
 
-    /* Track highest rebound crest between peaks */
-    if (v_curr > channel->rebound_crest)
+    uint8_t is_neg_peak = 0u;
+    uint8_t is_pos_peak = 0u;
+
+    /* Negative plunge peak: local minimum <= -600 LSB */
+    if ((v_p1 <= v_p2) && (v_p1 < v_curr) &&
+        (delta_p1 <= -sQvarAppConfig.qvar1ButtonMinPeakRaw))
     {
-        channel->rebound_crest = v_curr;
+        is_neg_peak = 1u;
+    }
+    /* Positive crest peak: local maximum >= +600 LSB */
+    else if ((v_p1 >= v_p2) && (v_p1 > v_curr) &&
+             (delta_p1 >= sQvarAppConfig.qvar1ButtonMinPeakRaw))
+    {
+        is_pos_peak = 1u;
     }
 
-    delta_p1 = (int32_t)channel->baseline - (int32_t)v_p1;
-
-    /* Plunge peak condition: local minimum (v_p1 <= v_p2 and v_p1 < v_curr) */
-    if ((v_p1 <= v_p2) && (v_p1 < v_curr) &&
-        (delta_p1 >= sQvarAppConfig.qvar1ButtonMinPeakRaw))
+    if ((is_neg_peak != 0u) || (is_pos_peak != 0u))
     {
         uint32_t cand_peak_ms = (now_ms >= sQvarAppConfig.readPeriodMs) ?
             (now_ms - sQvarAppConfig.readPeriodMs) : now_ms;
-        int32_t rebound_lift = (int32_t)channel->rebound_crest - (int32_t)v_p1;
 
-        /* Must satisfy refractory period (>= 70 ms) and rebound lift (>= 1500 LSB) if following a previous peak */
-        if (((cand_peak_ms - channel->last_peak_ms) >= 70u) &&
-            ((channel->last_peak_ms == 0u) || (rebound_lift >= 1500L)))
+        if ((cand_peak_ms - channel->last_peak_ms) >= 70u)
         {
             channel->last_peak_ms = cand_peak_ms;
-            channel->rebound_crest = v_curr;
-            printf("[IMU QVAR] Q1 PEAK (depth=%ld LSB / %.1f mV)\r\n",
+            printf("[IMU QVAR] Q1 PEAK (%s val=%d delta=%+ld LSB / %+.1f mV)\r\n",
+                   (is_neg_peak != 0u) ? "NEG" : "POS",
+                   (int)v_p1,
                    (long)delta_p1,
                    (float)delta_p1 / 78.0f);
         }

@@ -45,7 +45,9 @@ VK_MAP = {
 KEYEVENTF_KEYUP = 0x0002
 
 # Telemetry regex patterns
-RE_PEAK = re.compile(r"\[IMU QVAR\]\s+Q1 PEAK(?:\s+\(depth=(-?\d+)\s+LSB\s*/\s*([0-9.]+)\s*mV\))?")
+RE_PEAK = re.compile(
+    r"\[IMU QVAR\]\s+Q1 PEAK(?:\s+\((?:(NEG|POS)\s+val=(-?\d+)\s+)?(?:delta|depth)=([+-]?\d+)\s+LSB\s*/\s*([+-]?[0-9.]+)\s*mV\))?"
+)
 RE_EVENT = re.compile(r"\[IMU QVAR\]\s+(Q1 PEAK|Q1 BUTTON TAP|Q1 BUTTON SINGLE|Q1 BUTTON DOUBLE|Q1 BUTTON TRIPLE)")
 RE_BASELINE = re.compile(r"\[IMU QVAR\]\s+Q1 (?:button )?baseline=(-?\d+)")
 
@@ -89,6 +91,12 @@ def main():
         help="Key to trigger on each peak (default: space)",
     )
     parser.add_argument(
+        "--min-peak",
+        type=int,
+        default=0,
+        help="Optional minimum peak amplitude (LSB) to trigger keypress (default: 0 = trigger all firmware peaks)",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Print raw serial stream",
@@ -104,6 +112,8 @@ def main():
     print(f"  Target Port : {args.port}")
     print(f"  Baud Rate   : {args.baud}")
     print(f"  Mapped Key  : [{key_name}] (Virtual Key Code: 0x{vk_code:02X})")
+    if args.min_peak > 0:
+        print(f"  Min Peak    : {args.min_peak} LSB (~{args.min_peak/78.0:.1f} mV)")
     print("=" * 65)
     print("  TIP: You can test this right now with:")
     print("       - Chrome Dino Game : Open chrome://dino and start tapping!")
@@ -146,13 +156,22 @@ def main():
             m_event = RE_EVENT.search(line)
 
             if m_peak or m_event:
-                tap_count += 1
+                pol = ""
+                delta_lsb = 0
                 depth_str = ""
-                if m_peak and m_peak.group(1):
-                    depth_lsb = m_peak.group(1)
-                    depth_mv = m_peak.group(2)
-                    depth_str = f" | Depth: {depth_lsb} LSB ({depth_mv} mV)"
+                if m_peak:
+                    pol = m_peak.group(1) or ""
+                    val = m_peak.group(2)
+                    delta_str = m_peak.group(3)
+                    mv_str = m_peak.group(4)
+                    if delta_str:
+                        delta_lsb = int(delta_str)
+                        depth_str = f" | {pol} Delta: {delta_str} LSB ({mv_str} mV)"
 
+                if args.min_peak > 0 and abs(delta_lsb) < args.min_peak:
+                    continue
+
+                tap_count += 1
                 # Immediately trigger native Windows keystroke
                 press_key(vk_code)
 

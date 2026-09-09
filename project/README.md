@@ -6,6 +6,7 @@ This directory contains the ESP32 / FreeRTOS port of the ISM330BX IMU driver and
 
 - `CMakeLists.txt`: ESP-IDF root project definition.
 - `plot_qvar.py`: Python real-time GUI visualizer and logger for COM serial telemetry.
+- `plot_raw_q1.py`: Standalone Python script dedicated to plotting raw Q1 electrode data (both live from COM7 and from CSV files).
 - `qvar_keyboard.py`: Standalone Python script that maps each detected electrode peak to a native Windows keyboard press (Spacebar by default).
 - `main/`: ESP-IDF component containing:
   - `main.c`: Application entry point (`app_main`), initializes I2C master (`GPIO 21/22`) and runs the QVAR polling loop.
@@ -27,23 +28,25 @@ The polling logic in `qvar.c` replaces STM32 HAL timing functions with FreeRTOS 
   #define QVAR_APP_ACTIVE_CONFIG QVAR_APP_CONFIG_BUTTON_Q1_ONLY
   ```
 - **Tuned Input Impedance ($Z_{in}$)**:
-  - Configured to `IMU_QVAR_ZIN_235_MOHM` ($235\text{ M}\Omega$) in `QVAR_CONFIG_BUTTON_Q1_ONLY` ([qvar.h](file:///c:/Users/prash/OneDrive/Desktop/IMU/IMU/project/main/qvar.h)) per ST AN5755 Section 5.3.1 (Page 19, line 54: `CTRL7 = 0xB0`), attenuating radiated airborne electric field noise by an additional $\approx 22\%$ over $300\text{ M}\Omega$.
+  - Configured to `IMU_QVAR_ZIN_2400_MOHM` ($2,400\text{ M}\Omega = 2.4\text{ G}\Omega$) in `QVAR_CONFIG_BUTTON_Q1_ONLY` ([qvar.h](file:///c:/Users/prash/OneDrive/Desktop/IMU/IMU/project/main/qvar.h)) per ST AN5755 Section 5.3.1 (`CTRL7 = 0x80`), providing the maximum possible physical charge-to-voltage conversion gain in silicon ($\approx 3.29\times$ higher than $730\text{ M}\Omega$, and $\approx 10.2\times$ higher than $235\text{ M}\Omega$) for ultra-sensitive touch and proximity detection.
 - **Hardware High-Pass Filter (HPF)**:
   - Enabled `.hpfEnable = 1u` in `QVAR_CONFIG_BUTTON_Q1_ONLY` ([qvar.h](file:///c:/Users/prash/OneDrive/Desktop/IMU/IMU/project/main/qvar.h)) per ST AN5755 Section 5.1.4 to eliminate floating-electrode DC static charge accumulation and recenter the baseline around $0\text{ LSB}$.
 - **10-Sample Moving Average FIR Comb Filter (50 Hz Notch)**:
   - Circular 10-sample rolling average ($100\text{ ms}$ window at 100 Hz) in `qvar.c` per ST AN5755 Section 5.1.6. Places an exact mathematical null notch at $50\text{ Hz}$ mains hum while slashing group delay by $50\%$ down to just $45\text{ ms}$.
 - **Deterministic 10 ms (100 Hz) Polling Loop**:
   - Implemented non-drifting periodic task pacing via `vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(10))` in [main.c](file:///c:/Users/prash/OneDrive/Desktop/IMU/IMU/project/main/main.c), doubling data throughput and temporal resolution over 50 Hz.
-- **Pure Peak Detector (Direct Real-Time Plunge Peak Marking)**:
-  - Removed all hold detection, multi-tap timers, and release state machines in favor of direct **Peak Event Marking**:
-    - **Local Plunge Minimum Detection**: Detects physical tap bottoms when $V[n-1] \le V[n-2]$ and $V[n-1] < V[n]$, with plunge depth $(\text{baseline} - V[n-1]) \ge \text{qvar1ButtonMinPeakRaw}$ ($2500\text{ LSB}$).
-    - **Refractory & Rebound Gating**: Subsequent peaks require at least $\ge 70\text{ ms}$ temporal separation and an inter-tap rebound crest of at least $+1500\text{ LSB}$ (confirming physical finger lift-off).
-    - **Instant Zero-Latency Emission**: Each peak is confirmed and printed immediately at the sample where it occurs:
+- **Bipolar Peak Detector ($\pm 200\text{ LSB}$ Maximum Sensitivity Threshold)**:
+  - Configured specifically for maximum sensitivity, detecting peaks on the slightest feather touch whenever the waveform crosses $\pm 200\text{ LSB}$ ($\approx 2.56\text{ mV}$):
+    - **Negative Plunge Peak**: Detects turnaround minimums when $V[n-1] \le V[n-2]$ and $V[n-1] < V[n]$, with plunge $\le -200\text{ LSB}$ (or $\Delta \le -200\text{ LSB}$).
+    - **Positive Crest Peak**: Detects turnaround maximums when $V[n-1] \ge V[n-2]$ and $V[n-1] > V[n]$, with crest $\ge +200\text{ LSB}$ (or $\Delta \ge +200\text{ LSB}$).
+    - **Hardware Input Impedance**: Configured to $Z_{in} = 2,400\text{ M}\Omega$ for maximum physical analog charge pickup.
+    - **Refractory Gating**: Enforces $\ge 70\text{ ms}$ refractory separation between consecutive triggers.
+    - **Instant Zero-Latency Emission**:
       ```
-      [IMU QVAR] Q1 PEAK (depth=%ld LSB / %.1f mV)
+      [IMU QVAR] Q1 PEAK (NEG val=-320 delta=-318 LSB / -4.1 mV)
+      [IMU QVAR] Q1 PEAK (POS val=+280 delta=+278 LSB / +3.6 mV)
       ```
-    - **Visual Marker Alignment**: In `plot_qvar.py`, the yellow event marker drops precisely at the bottom apex of each plunge in real-time. Single tap drops 1 marker; double tap drops 2 markers (one on each peak); triple tap drops 3 markers.
-    - **Empirical Accuracy**: $100\%$ accuracy across all benchmark datasets (0 false peaks on noise).
+    - **Visual Alignment**: In `plot_raw_q1.py`, subtle dashed reference lines display at $+200$ and $-200\text{ LSB}$, with yellow markers dropping directly on confirmed peaks. Users can adjust the visualization threshold at any time via `python plot_raw_q1.py --threshold <LSB>`.
 - **Periodic Baseline Heartbeat**:
   - Firmware broadcasts `[IMU QVAR] Q1 button baseline=...` every 5 seconds so serial monitors connecting after boot immediately acquire active baseline and threshold guides.
 - **Physical Voltage Readout**:
@@ -141,3 +144,24 @@ python qvar_keyboard.py --port COM7
 - 🦖 **Chrome Dino Game**: Open `chrome://dino` in your browser and tap your electrode to jump!
 - ⏯️ **Media Control**: Tap to pause/play YouTube or Spotify.
 - 📑 **Slide Presentations**: Tap to advance slides in PowerPoint / PDF presentation mode.
+
+---
+
+## Standalone Raw Q1 Plotter (`plot_raw_q1.py`)
+
+A focused, lightweight plotting script for the **Q1 electrode** supporting both live serial streaming and recorded CSV visualization.
+
+### Quick Start
+```powershell
+# 1. Live streaming from COM7 (rolling oscilloscope view with monotonic auto-expansion)
+python plot_raw_q1.py
+
+# 2. Lock Y-axis limits (e.g. -35000 to +5000 LSB)
+python plot_raw_q1.py --ylim -35000 5000
+
+# 3. View any recorded CSV file (e.g. data/Glasses.csv)
+python plot_raw_q1.py data/Glasses.csv
+
+# 4. Adjust rolling window size (default: 300 samples)
+python plot_raw_q1.py --window 500
+```

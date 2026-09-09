@@ -140,9 +140,9 @@ typedef struct {
     .qvar2WearReleaseRaw = 250L,                           \
     .qvar2WearOnConfirmMs = 500u,                          \
     .qvar2WearOffConfirmMs = 1500u,                        \
-    .qvar1ButtonThresholdRaw = 2000L,                      \
-    .qvar1ButtonReleaseRaw = 1000L,                        \
-    .qvar1ButtonMinPeakRaw = 2500L,                        \
+    .qvar1ButtonThresholdRaw = 200L,                       \
+    .qvar1ButtonReleaseRaw = 100L,                         \
+    .qvar1ButtonMinPeakRaw = 200L,                         \
     .qvar1ButtonMaxPressMs = 400u,                         \
     .qvar1ButtonHoldTimeMs = 800u,                         \
     .qvar1ButtonDoubleTapWindowMs = 300u,                  \
