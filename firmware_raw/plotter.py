@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
-"""
-Standalone Raw Q1 Electrode Waveform Plotter
-============================================
+r"""
+Standalone Raw Q1 Electrode Waveform Plotter & CSV Logger
+=========================================================
 Lightweight visualizer dedicated purely to plotting raw Q1 electrode telemetry
-streaming over COM7 (or viewing recorded CSV waveforms).
+streaming over COM7 and continuously recording samples into CSV files in:
+C:\Users\prash\OneDrive\Desktop\IMU\IMU\firmware_raw\data
 
 Features:
-  - Live Serial Mode (default): Streams and plots raw Q1 samples from COM7 in real time.
-  - CSV File Mode: Plots recorded sessions from CSV files (e.g. data/Glasses.csv).
-  - Monotonic auto-expansion (no bouncing/shrinking).
-  - Premium dark-mode oscilloscope theme with live HUD (LSB, mV, Min, Max, Peak-to-Peak).
+  - Live Serial Streaming (default): Streams raw Q1 samples from COM7 in real time.
+  - Automatic CSV Logging: Continuously writes every sample to a timestamped CSV file in data/.
+  - CSV File Viewer: Plots recorded sessions from CSV files (e.g. data/raw_q1_....csv).
+  - Monotonic auto-expansion (smooth, non-shrinking Y-axis scaling).
+  - Premium dark-mode oscilloscope theme with live HUD (LSB, mV, Min, Max, Peak-to-Peak, CSV status).
 
 Usage:
-  python plot_raw_q1.py                    # Live streaming from COM7
-  python plot_raw_q1.py --port COM7        # Specify serial port
-  python plot_raw_q1.py data/Glasses.csv   # View recorded CSV waveform
-  python plot_raw_q1.py --window 500       # Adjust rolling window size (samples)
-  python plot_raw_q1.py --ylim -35000 5000 # Lock Y-axis limits
+  python plotter.py                    # Stream from COM7 & auto-save to data/
+  python plotter.py --port COM7        # Specify serial port
+  python plotter.py data/session.csv   # View recorded CSV waveform
+  python plotter.py --csv-name my.csv  # Custom CSV file name
 """
 
 import argparse
@@ -39,20 +40,40 @@ except ImportError:
 # Regex to extract Q1 raw sample from ESP32 serial stream
 # Matches: [IMU QVAR RAW] Q1=1240 Q2=... or Q1=-52
 RE_RAW_Q1 = re.compile(r"\[IMU QVAR RAW\]\s+Q1=(?:NA:)?(-?\d+)")
+DEFAULT_DATA_DIR = r"C:\Users\prash\OneDrive\Desktop\IMU\IMU\firmware_raw\data"
 
 
 class RawQ1SerialReader:
-    """Reads serial line stream in a background thread and extracts Q1 raw samples."""
+    """Reads serial line stream in a background thread, extracts Q1 raw samples,
+    and automatically logs them to a CSV file in data_dir."""
 
-    def __init__(self, port, baud, max_samples=2000):
+    def __init__(self, port, baud, max_samples=2000, data_dir=None, csv_filename=None):
         self.port = port
         self.baud = baud
         self.max_samples = max_samples
+        self.data_dir = data_dir or DEFAULT_DATA_DIR
         self.lock = threading.Lock()
         self.running = True
         self.connected = False
         self.status = "Connecting..."
         self.sample_idx = 0
+
+        # CSV Logging Setup
+        os.makedirs(self.data_dir, exist_ok=True)
+        if not csv_filename:
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            csv_filename = f"raw_q1_{ts}.csv"
+        self.csv_path = os.path.join(self.data_dir, csv_filename)
+        self.csv_file = None
+        self.csv_writer = None
+        try:
+            self.csv_file = open(self.csv_path, "w", newline="", encoding="utf-8")
+            self.csv_writer = csv.writer(self.csv_file)
+            self.csv_writer.writerow(["iso_time", "epoch_seconds", "sample_index", "q1_raw", "q1_voltage_mv"])
+            self.csv_file.flush()
+            print(f"[+] Recording raw telemetry to CSV: {self.csv_path}")
+        except Exception as e:
+            print(f"[!] Warning: Failed to initialize CSV logging: {e}")
 
         # Buffers
         self.indices = collections.deque(maxlen=max_samples)
@@ -88,10 +109,24 @@ class RawQ1SerialReader:
                 m = RE_RAW_Q1.search(line)
                 if m:
                     val = int(m.group(1))
+                    now_epoch = time.time()
+                    iso_now = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now_epoch)) + f".{int((now_epoch % 1) * 1000):03d}"
+                    mv_val = round(val / 78.0, 2)
+
                     with self.lock:
                         self.sample_idx += 1
-                        self.indices.append(self.sample_idx)
+                        cur_idx = self.sample_idx
+                        self.indices.append(cur_idx)
                         self.values.append(val)
+
+                    # Save reading to CSV file
+                    if self.csv_writer:
+                        try:
+                            self.csv_writer.writerow([iso_now, f"{now_epoch:.4f}", cur_idx, val, mv_val])
+                            if cur_idx % 10 == 0:
+                                self.csv_file.flush()
+                        except Exception:
+                            pass
             except Exception as e:
                 self.status = f"Read error: {e}"
                 time.sleep(0.05)
@@ -102,20 +137,31 @@ class RawQ1SerialReader:
 
     def get_data(self):
         with self.lock:
-            return list(self.indices), list(self.values), self.status, self.connected
+            return list(self.indices), list(self.values), self.status, self.connected, self.csv_path, self.sample_idx
 
     def stop(self):
         self.running = False
+        if self.csv_file:
+            try:
+                self.csv_file.flush()
+                self.csv_file.close()
+                print(f"[+] Saved {self.sample_idx} raw samples to: {self.csv_path}")
+            except Exception:
+                pass
+            self.csv_file = None
 
 
-def plot_live(port, baud, window_size, ylim=None):
+def plot_live(port, baud, window_size, ylim=None, data_dir=None, csv_filename=None):
     """Run real-time dark-theme rolling waveform plot of raw Q1 data."""
-    reader = RawQ1SerialReader(port, baud, max_samples=max(2000, window_size * 2))
+    reader = RawQ1SerialReader(
+        port, baud, max_samples=max(2000, window_size * 2),
+        data_dir=data_dir, csv_filename=csv_filename
+    )
 
     # Styling
     plt.style.use("dark_background")
     fig, ax = plt.subplots(figsize=(11, 6))
-    fig.canvas.manager.set_window_title(f"QVAR Raw Q1 Stream - {port}")
+    fig.canvas.manager.set_window_title(f"QVAR Raw Q1 Stream & Logger - {port}")
     fig.patch.set_facecolor("#0b0f19")
     ax.set_facecolor("#111827")
 
@@ -141,7 +187,7 @@ def plot_live(port, baud, window_size, ylim=None):
         fontsize=13, weight="bold"
     )
     hud_text = ax.text(
-        0.02, 0.86, "Waiting for telemetry...",
+        0.02, 0.84, "Waiting for telemetry...",
         transform=ax.transAxes, color="#38bdf8",
         fontsize=10, family="monospace"
     )
@@ -156,7 +202,7 @@ def plot_live(port, baud, window_size, ylim=None):
 
     def update(frame):
         nonlocal y_min_hist, y_max_hist
-        xs, ys, status, connected = reader.get_data()
+        xs, ys, status, connected, csv_path, total_samples = reader.get_data()
 
         status_text.set_text(status)
         status_text.set_color("#4ade80" if connected else "#f87171")
@@ -175,7 +221,7 @@ def plot_live(port, baud, window_size, ylim=None):
         max_x = disp_xs[-1]
         ax.set_xlim(min_x, max(max_x, min_x + 10))
 
-        # Y-axis auto-scaling: monotonic expansion (only zoom out, never zoom in)
+        # Y-axis auto-scaling: monotonic expansion
         curr_min = min(disp_ys)
         curr_max = max(disp_ys)
         y_min_hist = min(y_min_hist, curr_min)
@@ -193,11 +239,13 @@ def plot_live(port, baud, window_size, ylim=None):
         latest_mv = latest_val / 78.0
         p2p = curr_max - curr_min
         p2p_mv = p2p / 78.0
+        csv_basename = os.path.basename(csv_path) if csv_path else "None"
 
         hud_text.set_text(
             f"Current  : {latest_val:+6d} LSB ({latest_mv:+6.1f} mV)\n"
             f"Min / Max: [{curr_min:+6d}, {curr_max:+6d}] LSB\n"
-            f"Peak-Peak: {p2p:6d} LSB ({p2p_mv:5.1f} mV)"
+            f"Peak-Peak: {p2p:6d} LSB ({p2p_mv:5.1f} mV)\n"
+            f"Logging  : data/{csv_basename} ({total_samples:,} saved)"
         )
 
         return line, hud_text, status_text, title_text
@@ -283,13 +331,13 @@ def plot_csv_file(csv_path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Standalone Raw Q1 Electrode Waveform Plotter (Live COM streaming or CSV viewer)"
+        description="Standalone Raw Q1 Electrode Waveform Plotter & CSV Logger (Live COM streaming or CSV viewer)"
     )
     parser.add_argument(
         "file",
         nargs="?",
         default=None,
-        help="Optional path to a CSV telemetry file (e.g. data/Glasses.csv) to view static recording.",
+        help="Optional path to a CSV telemetry file (e.g. data/raw_q1_....csv) to view static recording.",
     )
     parser.add_argument(
         "--port",
@@ -317,6 +365,16 @@ def main():
         help="Lock Y-axis limits to fixed range (e.g. --ylim -35000 5000)",
     )
     parser.add_argument(
+        "--data-dir",
+        default=DEFAULT_DATA_DIR,
+        help=f"Directory to store captured CSV telemetry files (default: {DEFAULT_DATA_DIR})",
+    )
+    parser.add_argument(
+        "--csv-name",
+        default=None,
+        help="Custom filename for the output CSV (default: auto-generated timestamped name)",
+    )
+    parser.add_argument(
         "--test",
         action="store_true",
         help="Quick validation mode (does not block on GUI loop)",
@@ -327,7 +385,7 @@ def main():
     # If test mode on CSV:
     if args.test and args.file:
         print(f"[*] Validating CSV load on '{args.file}'...")
-        with open(args.file, "r") as f:
+        with open(args.file, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             first_row = next(reader, None)
             assert first_row and "q1_raw" in first_row, "Missing q1_raw column"
@@ -338,7 +396,14 @@ def main():
     if args.file:
         plot_csv_file(args.file)
     else:
-        plot_live(args.port, args.baud, args.window, args.ylim)
+        plot_live(
+            port=args.port,
+            baud=args.baud,
+            window_size=args.window,
+            ylim=args.ylim,
+            data_dir=args.data_dir,
+            csv_filename=args.csv_name,
+        )
 
 
 if __name__ == "__main__":

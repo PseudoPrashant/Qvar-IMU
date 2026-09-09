@@ -1,6 +1,6 @@
-# ISM330BX Pure Raw Telemetry Firmware
+# ISM330BX Pure Raw Telemetry Firmware & Visualizer
 
-A standalone, minimal ESP-IDF firmware dedicated purely to streaming completely unprocessed 16-bit ADC samples directly from the ISM330BX QVAR register.
+A standalone, minimal ESP-IDF firmware and Python real-time visualizer dedicated purely to streaming and recording completely unprocessed 16-bit ADC samples directly from the ISM330BX QVAR register.
 
 ## Key Characteristics:
 - **Zero Filtering (Neither Hardware nor Software)**:
@@ -15,9 +15,30 @@ A standalone, minimal ESP-IDF firmware dedicated purely to streaming completely 
   - Directly reads registers `0x3A` / `0x3B` (`ISM330BX_AH_QVAR_OUT_L` / `H`).
 - **Telemetry Format**:
   - `[IMU QVAR RAW] Q1=<raw_lsb> Q2=NA (<voltage> mV) #<sample_count>`
-  - Fully compatible with `plot_raw_q1.py`.
 
-## Build & Flash:
+---
+
+## Real-Time Visualizer & CSV Data Logger (`plotter.py`):
+Located directly in this folder, `plotter.py` connects to COM7, renders a dark-mode real-time oscilloscope, and **automatically records every sample into CSV format** inside `firmware_raw\data\`:
+
+```powershell
+# Live plot + automatic CSV recording in data/
+python plotter.py
+
+# Specify serial port or custom CSV filename
+python plotter.py --port COM7 --csv-name my_session.csv
+
+# View any previously recorded CSV file
+python plotter.py data\raw_q1_YYYYMMDD_HHMMSS.csv
+```
+
+### CSV Schema:
+Files stored in `firmware_raw\data\raw_q1_<timestamp>.csv`:
+`iso_time,epoch_seconds,sample_index,q1_raw,q1_voltage_mv`
+
+---
+
+## Build & Flash Firmware:
 ```powershell
 # 1. Activate ESP-IDF
 . C:\esp\v6.1\esp-idf\export.ps1
