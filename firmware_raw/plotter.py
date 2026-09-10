@@ -41,7 +41,8 @@ except ImportError:
 # Regex to extract Q1 raw sample and optional Q1_ACT envelope from ESP32 serial stream
 # Matches: [IMU QVAR RAW] Q1=1240 Q1_ACT=1180 Q2=... or Q1=-52
 RE_TELEMETRY = re.compile(r"\[IMU QVAR RAW\]\s+Q1=(?:NA:)?(-?\d+)(?:\s+Q1_ACT=(?:NA:)?(-?\d+))?")
-RE_TAP = re.compile(r"\[IMU QVAR TAP\]\s+#(\d+)\s+dur=(\d+)\s*ms\s+peak=(\d+)(?:\s+LSB)?(?:\s+base=([\d\.]+))?")
+RE_TAP = re.compile(r"\[IMU QVAR TAP\]\s+#(\d+)\s+dur=(\d+)\s*ms\s+peak=(\d+)(?:\s+LSB)?(?:\s+base=([\d\.]+))?(?:\s+th=(\d+))?(?:\s+ceil=(\d+))?")
+RE_CALIB = re.compile(r"\[IMU QVAR CALIB\]\s+BASE=([\d\.]+)\s+LO=(\d+)\s+HI=(\d+)")
 DEFAULT_DATA_DIR = r"C:\Users\prash\OneDrive\Desktop\IMU\IMU\firmware_raw\data"
 
 
@@ -59,6 +60,9 @@ class DualQ1SerialReader:
         self.status = "Connecting..."
         self.sample_idx = 0
         self.has_act = False
+        self.baseline_act = None
+        self.lower_th = 3500
+        self.upper_ceil = 5500
 
         # CSV Logging Setup
         os.makedirs(self.data_dir, exist_ok=True)
@@ -115,12 +119,25 @@ class DualQ1SerialReader:
                 if not line:
                     continue
 
+                m_calib = RE_CALIB.search(line)
+                if m_calib:
+                    with self.lock:
+                        self.baseline_act = float(m_calib.group(1))
+                        self.lower_th = int(m_calib.group(2))
+                        self.upper_ceil = int(m_calib.group(3))
+
                 m_tap = RE_TAP.search(line)
                 if m_tap:
                     t_id = int(m_tap.group(1))
                     t_dur = int(m_tap.group(2))
                     t_peak = int(m_tap.group(3))
                     with self.lock:
+                        if m_tap.group(4) is not None:
+                            self.baseline_act = float(m_tap.group(4))
+                        if m_tap.group(5) is not None:
+                            self.lower_th = int(m_tap.group(5))
+                        if m_tap.group(6) is not None:
+                            self.upper_ceil = int(m_tap.group(6))
                         self.tap_events.append((self.sample_idx, t_id, t_dur, t_peak))
                         self.latest_tap_info = (t_id, t_dur, t_peak)
                         self.latest_tap_time = time.time()
@@ -306,32 +323,42 @@ def plot_live(port, baud, window_size, ylim=None, data_dir=None, csv_filename=No
         raw_mv = latest_raw / 78.0
         act_mv = latest_act / 78.0
 
+        # Dynamic Auto-Calibration Threshold Tracking
+        cur_lower_th = reader.lower_th
+        cur_upper_ceil = reader.upper_ceil
+        cur_base = reader.baseline_act
+
+        thresh_lower.set_ydata([cur_lower_th, cur_lower_th])
+        thresh_upper.set_ydata([cur_upper_ceil, cur_upper_ceil])
+
         now = time.time()
         if last_tap and (now - last_tap_time) < 1.5:
             t_id, t_dur, t_peak = last_tap
             state_str = f"*** TAP CONFIRMED #{t_id} (dur={t_dur} ms, peak={t_peak} LSB) ***"
             status_color = "#facc15"  # bright yellow
-        elif latest_act > 5500:
-            state_str = "REJECTED (ABOVE 5500 LSB UPPER CEILING - KILL-SWITCH)"
+        elif latest_act > cur_upper_ceil:
+            state_str = f"REJECTED (ABOVE {cur_upper_ceil} LSB UPPER CEILING - KILL-SWITCH)"
             status_color = "#f87171"  # red
-        elif latest_act > 3500:
-            state_str = "IN-BAND CANDIDATE EVENT (3500 - 5500 LSB)"
+        elif latest_act > cur_lower_th:
+            state_str = f"IN-BAND CANDIDATE EVENT ({cur_lower_th} - {cur_upper_ceil} LSB)"
             status_color = "#38bdf8"  # cyan
         else:
-            state_str = "IDLE (BELOW 3500 LSB NOISE FLOOR)"
+            state_str = f"IDLE (BELOW {cur_lower_th} LSB NOISE FLOOR)"
             status_color = "#94a3b8"  # gray
 
         csv_basename = os.path.basename(csv_path) if csv_path else "None"
+        base_str = f"{cur_base:.0f} LSB" if cur_base is not None else "Calibrating..."
 
         hud_text.set_text(
             f"Raw Q1   : {latest_raw:+6d} LSB ({raw_mv:+6.1f} mV)\n"
-            f"Activity : {latest_act:6d} LSB ({act_mv:5.1f} mV) [5-Sample P2P Envelope]\n"
+            f"Activity : {latest_act:6d} LSB ({act_mv:5.1f} mV) [4-Sample P2P Envelope]\n"
+            f"Auto-Cal : Base={base_str} | Floor={cur_lower_th} LSB | Ceil={cur_upper_ceil} LSB\n"
             f"Status   : {state_str}\n"
             f"Firmware Taps: {len(tap_evs)} | Logging: data/{csv_basename}"
         )
         hud_text.set_color(status_color)
 
-        return line_raw, line_act, line_tap_markers, hud_text, status_text, title_text
+        return line_raw, line_act, line_tap_markers, thresh_lower, thresh_upper, hud_text, status_text, title_text
 
     ani = animation.FuncAnimation(fig, update, interval=25, blit=False, cache_frame_data=False)
 

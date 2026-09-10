@@ -1,0 +1,49 @@
+=======================================================================
+           ISM330BX QVAR TAP DETECTION ACCURACY BENCHMARK REPORT       
+=======================================================================
+Timestamp          : 2026-09-10 12:06:35
+Firmware Serial Port: COM7 @ 115200 baud
+Total Prompted Cues: 20
+Recorded Telemetry : data/tap_benchmark_20260910_120426.csv (25817 samples @ 200 Hz)
+-----------------------------------------------------------------------
+CORE ACCURACY METRICS:
+  • True Positives (Hits)       : 17 / 20 ( 85.0%)
+  • False Negatives (Misses)    :  3 / 20
+  • False Positives (Ghost Taps):  3
+  • Detection Sensitivity/Recall:  85.0%
+  • Overall Precision           :  85.0%
+-----------------------------------------------------------------------
+REACTION & SIGNAL METRICS:
+  • Avg Reaction Latency       : 791.7 ms (Min: 413 ms, Max: 1482 ms)
+  • Avg Tap Peak Activity      :  8662 LSB (Min: 6538, Max: 10341)
+  • Avg Tap Duration           : 104.7 ms (Min: 45 ms, Max: 160 ms)
+-----------------------------------------------------------------------
+DETAILED PER-TRIAL RESULTS:
+Trial | Outcome |   Reaction |   Peak Act |   Duration | Lower Floor
+-----------------------------------------------------------------------
+    1 |     HIT |    1482 ms |   9762 LSB |     160 ms |    7948 LSB
+    2 |     HIT |     511 ms |  10341 LSB |     120 ms |    7760 LSB
+    3 |     HIT |     582 ms |   8632 LSB |     140 ms |    6642 LSB
+    4 |     HIT |     521 ms |   9365 LSB |     120 ms |    8243 LSB
+    5 |     HIT |     413 ms |   8519 LSB |      50 ms |    7631 LSB
+    6 |    MISS |         -- |         -- |         -- |    6168 LSB
+    7 |     HIT |     613 ms |   9737 LSB |     145 ms |    6861 LSB
+    8 |     HIT |     560 ms |   8635 LSB |      50 ms |    7484 LSB
+    9 |     HIT |     493 ms |   7218 LSB |      65 ms |    6470 LSB
+   10 |     HIT |    1295 ms |  10225 LSB |     145 ms |    7125 LSB
+   11 |     HIT |    1165 ms |   9643 LSB |     130 ms |    8259 LSB
+   12 |     HIT |     649 ms |   6538 LSB |      80 ms |    6266 LSB
+   13 |     HIT |    1091 ms |   8371 LSB |      60 ms |    7618 LSB
+   14 |    MISS |         -- |         -- |         -- |    7301 LSB
+   15 |     HIT |     731 ms |   6978 LSB |     105 ms |    6522 LSB
+   16 |     HIT |     621 ms |   7459 LSB |     110 ms |    6543 LSB
+   17 |     HIT |     708 ms |   8566 LSB |      95 ms |    6435 LSB
+   18 |     HIT |     680 ms |   7405 LSB |      45 ms |    6444 LSB
+   19 |    MISS |         -- |         -- |         -- |    6648 LSB
+   20 |     HIT |    1342 ms |   9856 LSB |     160 ms |    6154 LSB
+-----------------------------------------------------------------------
+FALSE POSITIVE EVENTS DETECTED (3):
+  [1] Context: Initial Hold Settling | Tap #3 dur=45ms peak=5702 LSB base=1553 th=4318
+  [2] Context: Initial Hold Settling | Tap #4 dur=100ms peak=6393 LSB base=1553 th=4318
+  [3] Context: Waiting before Trial 15 | Tap #17 dur=160ms peak=9688 LSB base=3819 th=7264
+=======================================================================

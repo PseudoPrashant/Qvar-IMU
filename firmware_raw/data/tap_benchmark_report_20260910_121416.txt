@@ -1,0 +1,52 @@
+=======================================================================
+           ISM330BX QVAR TAP DETECTION ACCURACY BENCHMARK REPORT       
+=======================================================================
+Timestamp          : 2026-09-10 12:16:36
+Firmware Serial Port: COM7 @ 115200 baud
+Total Prompted Cues: 20
+Recorded Telemetry : data/tap_benchmark_20260910_121416.csv (27893 samples @ 200 Hz)
+-----------------------------------------------------------------------
+CORE ACCURACY METRICS:
+  • True Positives (Hits)       : 17 / 20 ( 85.0%)
+  • False Negatives (Misses)    :  3 / 20
+  • False Positives (Ghost Taps):  6
+  • Detection Sensitivity/Recall:  85.0%
+  • Overall Precision           :  73.9%
+-----------------------------------------------------------------------
+REACTION & SIGNAL METRICS:
+  • Avg Reaction Latency       : 769.7 ms (Min: 403 ms, Max: 1345 ms)
+  • Avg Tap Peak Activity      :  9835 LSB (Min: 7927, Max: 10846)
+  • Avg Tap Duration           : 140.3 ms (Min: 50 ms, Max: 200 ms)
+-----------------------------------------------------------------------
+DETAILED PER-TRIAL RESULTS:
+Trial | Outcome |   Reaction |   Peak Act |   Duration | Lower Floor
+-----------------------------------------------------------------------
+    1 |     HIT |     594 ms |  10085 LSB |     200 ms |    8032 LSB
+    2 |    MISS |         -- |         -- |         -- |    6271 LSB
+    3 |    MISS |         -- |         -- |         -- |    6439 LSB
+    4 |     HIT |     568 ms |  10422 LSB |     160 ms |    8105 LSB
+    5 |     HIT |    1267 ms |   8500 LSB |     100 ms |    7928 LSB
+    6 |     HIT |    1345 ms |   9230 LSB |     170 ms |    6020 LSB
+    7 |     HIT |     517 ms |  10564 LSB |     165 ms |    6742 LSB
+    8 |     HIT |     669 ms |  10618 LSB |     140 ms |    7939 LSB
+    9 |     HIT |     534 ms |   9944 LSB |     130 ms |    6751 LSB
+   10 |     HIT |     612 ms |  10200 LSB |     140 ms |    7744 LSB
+   11 |     HIT |     640 ms |  10458 LSB |     130 ms |    7546 LSB
+   12 |     HIT |     542 ms |   9108 LSB |     140 ms |    6183 LSB
+   13 |     HIT |     403 ms |   7927 LSB |      50 ms |    6078 LSB
+   14 |     HIT |    1038 ms |  10477 LSB |     140 ms |    7792 LSB
+   15 |     HIT |    1081 ms |   8458 LSB |     110 ms |    7270 LSB
+   16 |     HIT |     745 ms |  10519 LSB |     160 ms |    7689 LSB
+   17 |     HIT |     728 ms |  10716 LSB |     150 ms |    8168 LSB
+   18 |     HIT |     622 ms |   9123 LSB |     130 ms |    7226 LSB
+   19 |    MISS |         -- |         -- |         -- |    7051 LSB
+   20 |     HIT |    1180 ms |  10846 LSB |     170 ms |    7736 LSB
+-----------------------------------------------------------------------
+FALSE POSITIVE EVENTS DETECTED (6):
+  [1] Context: Return to Desk Release | Tap #21 dur=30ms peak=6625 LSB base=1530 th=4158
+  [2] Context: Return to Desk Release | Tap #22 dur=30ms peak=5771 LSB base=1541 th=4172
+  [3] Context: Return to Desk Release | Tap #23 dur=30ms peak=4873 LSB base=1622 th=4276
+  [4] Context: Return to Desk Release | Tap #24 dur=40ms peak=6287 LSB base=3089 th=6153
+  [5] Context: Return to Desk Release | Tap #25 dur=140ms peak=6508 LSB base=3064 th=6121
+  [6] Context: Return to Desk Release | Tap #26 dur=200ms peak=6797 LSB base=4010 th=7332
+=======================================================================

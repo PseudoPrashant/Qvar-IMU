@@ -58,11 +58,21 @@ static inline int32_t qvar_envelope_extractor_update(qvar_envelope_extractor_t *
     return (int32_t)max_val - (int32_t)min_val;
 }
 
-/* Time-Gated Band-Pass State Machine Tap Detection Engine */
-#define TAP_LOWER_THRESHOLD_LSB   3500L   /* Lower floor to initiate event */
-#define TAP_UPPER_CEILING_LSB     5500L   /* Kill-switch ceiling */
+/* True Real-Time Rolling-Window Auto-Calibration & Tap Detection Engine */
+#define ROLLING_BLOCK_SIZE        20u     /* 20 samples = 100 ms per block @ 200 Hz */
+#define ROLLING_NUM_BLOCKS        10u     /* 10 blocks = 1.0 s rolling history window (fast response) */
+
+#define CALIB_LOWER_OFFSET        1800L   /* Base margin above baseline noise floor */
+#define CALIB_LOWER_BUFFER        400L    /* Dedicated noise headroom buffer against AC hum beating */
+#define CALIB_LOWER_RATIO         0.28f   /* Adaptive proportional scaling of lower threshold */
+#define CALIB_BAND_OFFSET         3000L   /* Base headroom between lower threshold and ceiling */
+#define CALIB_BAND_RATIO          0.25f   /* Proportional scaling of ceiling band */
+#define CALIB_MIN_LOWER_TH        2500L   /* Safety clamp floor for lower threshold */
+#define CALIB_MAX_UPPER_CEIL      25000L  /* Safety clamp ceiling */
+
 #define TAP_BRIDGE_TIMER_SAMPLES  10u     /* 50 ms bridge timer at 200 Hz */
-#define TAP_MIN_DUR_SAMPLES       8u      /* 40 ms min duration at 200 Hz */
+#define TAP_MIN_DUR_SAMPLES       5u      /* 25 ms min duration at 200 Hz (captures crisp taps) */
+#define TAP_MAX_DUR_SAMPLES       60u     /* 300 ms max duration at 200 Hz (rejects holds & slow drift) */
 #define TAP_LOCKOUT_SAMPLES       30u     /* 150 ms lockout cooldown at 200 Hz */
 #define TAP_LED_GPIO              GPIO_NUM_2
 #define TAP_LED_PULSE_SAMPLES     30u     /* 150 ms pulse @ 200 Hz */
@@ -76,6 +86,17 @@ typedef enum {
 } tap_state_t;
 
 typedef struct {
+    /* Real-Time Rolling-Window Noise Floor Tracker */
+    uint16_t block_mins[ROLLING_NUM_BLOCKS];
+    uint16_t cur_block_min;
+    uint8_t  sample_in_block;
+    uint8_t  block_idx;
+    uint8_t  blocks_filled;
+    float    baseline_act;
+    int32_t  lower_threshold;
+    int32_t  upper_ceiling;
+
+    /* Tap Detection State Machine */
     tap_state_t state;
     uint8_t in_event;
     uint8_t event_valid;
@@ -90,12 +111,60 @@ typedef struct {
 
 static robust_tap_detector_t sTapDetector = {0};
 
+static inline void robust_tap_detector_recalc_thresholds(robust_tap_detector_t *det) {
+    int32_t lower_th = (int32_t)(det->baseline_act + CALIB_LOWER_OFFSET + CALIB_LOWER_BUFFER + (CALIB_LOWER_RATIO * det->baseline_act));
+    if (lower_th < CALIB_MIN_LOWER_TH) {
+        lower_th = CALIB_MIN_LOWER_TH;
+    }
+    int32_t upper_ceil = lower_th + (int32_t)(CALIB_BAND_OFFSET + (CALIB_BAND_RATIO * det->baseline_act));
+    if (upper_ceil > CALIB_MAX_UPPER_CEIL) {
+        upper_ceil = CALIB_MAX_UPPER_CEIL;
+    }
+    det->lower_threshold = lower_th;
+    det->upper_ceiling = upper_ceil;
+}
+
 static inline uint8_t robust_tap_detector_update(robust_tap_detector_t *det,
                                                 uint32_t sample_idx,
                                                 int16_t raw_val,
                                                 int32_t act_val)
 {
-    uint8_t tap_confirmed = 0u;
+    /* 1. Real-time rolling block-minimum noise floor extraction */
+    uint16_t act_u16 = (act_val > 65535L) ? 65535u : (uint16_t)act_val;
+    if (det->sample_in_block == 0u || act_u16 < det->cur_block_min) {
+        det->cur_block_min = act_u16;
+    }
+    det->sample_in_block++;
+
+    /* When block completes (every 20 samples = 100 ms) */
+    if (det->sample_in_block >= ROLLING_BLOCK_SIZE) {
+        det->sample_in_block = 0u;
+        det->block_mins[det->block_idx] = det->cur_block_min;
+        det->block_idx = (det->block_idx + 1u) % ROLLING_NUM_BLOCKS;
+        if (det->blocks_filled < ROLLING_NUM_BLOCKS) {
+            det->blocks_filled++;
+        }
+
+        /* Extract true noise floor as the 2nd lowest block minimum (rejects transient dips) */
+        uint16_t min1 = 65535u;
+        uint16_t min2 = 65535u;
+        for (uint8_t b = 0u; b < det->blocks_filled; b++) {
+            uint16_t v = det->block_mins[b];
+            if (v < min1) {
+                min2 = min1;
+                min1 = v;
+            } else if (v < min2) {
+                min2 = v;
+            }
+        }
+        uint16_t floor_val = (det->blocks_filled > 1u) ? min2 : min1;
+        det->baseline_act = (float)floor_val;
+        robust_tap_detector_recalc_thresholds(det);
+    } else if (det->blocks_filled == 0u && det->sample_in_block == 1u) {
+        /* Very first sample: immediate non-zero threshold initialization */
+        det->baseline_act = (float)act_u16;
+        robust_tap_detector_recalc_thresholds(det);
+    }
 
     /* Enforce post-tap lockout cooldown */
     if (det->lockout_timer > 0u) {
@@ -106,10 +175,12 @@ static inline uint8_t robust_tap_detector_update(robust_tap_detector_t *det,
         return 0u;
     }
 
+    uint8_t tap_confirmed = 0u;
+
     if (det->in_event == 0u) {
-        if (act_val > TAP_LOWER_THRESHOLD_LSB) {
+        if (act_val > det->lower_threshold) {
             det->in_event = 1u;
-            det->event_valid = (act_val <= TAP_UPPER_CEILING_LSB) ? 1u : 0u;
+            det->event_valid = (act_val <= det->upper_ceiling) ? 1u : 0u;
             det->start_idx = sample_idx;
             det->last_above_idx = sample_idx;
             det->peak_act = act_val;
@@ -122,22 +193,24 @@ static inline uint8_t robust_tap_detector_update(robust_tap_detector_t *det,
             det->peak_act = act_val;
         }
 
-        /* Kill-switch: permanently invalidate event if ceiling breached */
-        if (act_val > TAP_UPPER_CEILING_LSB) {
+        /* Kill-switch: permanently invalidate event if upper ceiling breached or max duration exceeded */
+        if (act_val > det->upper_ceiling || (sample_idx - det->start_idx) > TAP_MAX_DUR_SAMPLES) {
             det->event_valid = 0u;
         }
 
-        if (act_val > TAP_LOWER_THRESHOLD_LSB) {
+        if (act_val > det->lower_threshold) {
             det->below_counter = 0u;
             det->last_above_idx = sample_idx;
         } else {
             det->below_counter++;
             if (det->below_counter >= TAP_BRIDGE_TIMER_SAMPLES) {
-                /* When Activity < TAP_LOWER_THRESHOLD_LSB for 50 consecutive ms (10 samples), event is over */
+                /* When Activity < lower_threshold for 50 consecutive ms (10 samples), event is over */
                 uint32_t total_dur_samples = (det->last_above_idx >= det->start_idx) ?
                                              (det->last_above_idx - det->start_idx + 1u) : 0u;
 
-                if ((det->event_valid != 0u) && (total_dur_samples >= TAP_MIN_DUR_SAMPLES)) {
+                if ((det->event_valid != 0u) &&
+                    (total_dur_samples >= TAP_MIN_DUR_SAMPLES) &&
+                    (total_dur_samples <= TAP_MAX_DUR_SAMPLES)) {
                     det->tap_count++;
                     det->last_tap_dur_ms = total_dur_samples * RAW_SAMPLE_PERIOD_MS; /* 5 ms @ 200 Hz */
                     tap_confirmed = 1u;
@@ -214,10 +287,21 @@ void app_main(void) {
             if (robust_tap_detector_update(&sTapDetector, sample_idx, q1_raw, q1_act) != 0u) {
                 gpio_set_level(TAP_LED_GPIO, 1);
                 sLedTimer = TAP_LED_PULSE_SAMPLES;
-                printf("[IMU QVAR TAP] #%lu dur=%lu ms peak=%ld LSB\r\n",
+                printf("[IMU QVAR TAP] #%lu dur=%lu ms peak=%ld LSB base=%.0f th=%ld ceil=%ld\r\n",
                        (unsigned long)sTapDetector.tap_count,
                        (unsigned long)sTapDetector.last_tap_dur_ms,
-                       (long)sTapDetector.peak_act);
+                       (long)sTapDetector.peak_act,
+                       sTapDetector.baseline_act,
+                       (long)sTapDetector.lower_threshold,
+                       (long)sTapDetector.upper_ceiling);
+            }
+
+            /* Every 10 samples (20 Hz / 50 ms), stream live real-time calibration telemetry */
+            if ((sample_idx % 10u) == 0u) {
+                printf("[IMU QVAR CALIB] BASE=%.0f LO=%ld HI=%ld\r\n",
+                       sTapDetector.baseline_act,
+                       (long)sTapDetector.lower_threshold,
+                       (long)sTapDetector.upper_ceiling);
             }
 
             /* Streamlined dual telemetry format to eliminate UART buffer saturation at 200 Hz */
