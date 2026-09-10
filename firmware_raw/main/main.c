@@ -62,6 +62,9 @@ static inline int32_t qvar_envelope_extractor_update(qvar_envelope_extractor_t *
 #define ROLLING_BLOCK_SIZE        20u     /* 20 samples = 100 ms per block @ 200 Hz */
 #define ROLLING_NUM_BLOCKS        10u     /* 10 blocks = 1.0 s rolling history window (fast response) */
 
+#define QUIET_BLOCK_SPREAD_MAX    1500u   /* LSB - Maximum spread for a block to be considered quiet */
+#define BASELINE_MAX_STEP_PER_BLOCK 175.0f /* LSB - Slew rate limit per block */
+
 #define CALIB_LOWER_OFFSET        1800L   /* Base margin above baseline noise floor */
 #define CALIB_LOWER_BUFFER        400L    /* Dedicated noise headroom buffer against AC hum beating */
 #define CALIB_LOWER_RATIO         0.28f   /* Adaptive proportional scaling of lower threshold */
@@ -89,6 +92,7 @@ typedef struct {
     /* Real-Time Rolling-Window Noise Floor Tracker */
     uint16_t block_mins[ROLLING_NUM_BLOCKS];
     uint16_t cur_block_min;
+    uint16_t cur_block_max;
     uint8_t  sample_in_block;
     uint8_t  block_idx;
     uint8_t  blocks_filled;
@@ -134,32 +138,49 @@ static inline uint8_t robust_tap_detector_update(robust_tap_detector_t *det,
     if (det->sample_in_block == 0u || act_u16 < det->cur_block_min) {
         det->cur_block_min = act_u16;
     }
+    if (det->sample_in_block == 0u || act_u16 > det->cur_block_max) {
+        det->cur_block_max = act_u16;
+    }
     det->sample_in_block++;
 
     /* When block completes (every 20 samples = 100 ms) */
     if (det->sample_in_block >= ROLLING_BLOCK_SIZE) {
         det->sample_in_block = 0u;
-        det->block_mins[det->block_idx] = det->cur_block_min;
-        det->block_idx = (det->block_idx + 1u) % ROLLING_NUM_BLOCKS;
-        if (det->blocks_filled < ROLLING_NUM_BLOCKS) {
-            det->blocks_filled++;
-        }
 
-        /* Extract true noise floor as the 2nd lowest block minimum (rejects transient dips) */
-        uint16_t min1 = 65535u;
-        uint16_t min2 = 65535u;
-        for (uint8_t b = 0u; b < det->blocks_filled; b++) {
-            uint16_t v = det->block_mins[b];
-            if (v < min1) {
-                min2 = min1;
-                min1 = v;
-            } else if (v < min2) {
-                min2 = v;
+        uint16_t block_spread = det->cur_block_max - det->cur_block_min;
+
+        if (block_spread <= QUIET_BLOCK_SPREAD_MAX) {
+            det->block_mins[det->block_idx] = det->cur_block_min;
+            det->block_idx = (det->block_idx + 1u) % ROLLING_NUM_BLOCKS;
+            if (det->blocks_filled < ROLLING_NUM_BLOCKS) {
+                det->blocks_filled++;
             }
         }
-        uint16_t floor_val = (det->blocks_filled > 1u) ? min2 : min1;
-        det->baseline_act = (float)floor_val;
-        robust_tap_detector_recalc_thresholds(det);
+
+        if (det->blocks_filled > 0u) {
+            /* Extract true noise floor as the 2nd lowest block minimum (rejects transient dips) */
+            uint16_t min1 = 65535u;
+            uint16_t min2 = 65535u;
+            for (uint8_t b = 0u; b < det->blocks_filled; b++) {
+                uint16_t v = det->block_mins[b];
+                if (v < min1) {
+                    min2 = min1;
+                    min1 = v;
+                } else if (v < min2) {
+                    min2 = v;
+                }
+            }
+            uint16_t floor_val = (det->blocks_filled > 1u) ? min2 : min1;
+            
+            float raw_baseline = (float)floor_val;
+            float prev_baseline = det->baseline_act;
+            float delta = raw_baseline - prev_baseline;
+            if (delta > BASELINE_MAX_STEP_PER_BLOCK) delta = BASELINE_MAX_STEP_PER_BLOCK;
+            if (delta < -BASELINE_MAX_STEP_PER_BLOCK) delta = -BASELINE_MAX_STEP_PER_BLOCK;
+            
+            det->baseline_act = prev_baseline + delta;
+            robust_tap_detector_recalc_thresholds(det);
+        }
     } else if (det->blocks_filled == 0u && det->sample_in_block == 1u) {
         /* Very first sample: immediate non-zero threshold initialization */
         det->baseline_act = (float)act_u16;
