@@ -24,7 +24,7 @@
 #define I2C_MASTER_FREQ_HZ          400000
 
 /* Hardware AFE configuration */
-#define RAW_QVAR_ZIN                ISM330BX_235MOhm   /* 235 MOhm input impedance (lowest, maximum noise immunity) */
+#define RAW_QVAR_ZIN                ISM330BX_730MOhm   /* 730 MOhm input impedance */
 #define RAW_SAMPLE_PERIOD_MS        5u                 /* 5 ms = 200 Hz sampling rate */
 
 /* 5-Sample Sliding Window Peak-to-Peak Envelope Extractor:
