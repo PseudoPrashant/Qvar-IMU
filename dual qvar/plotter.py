@@ -68,7 +68,7 @@ class DualQ1SerialReader:
         os.makedirs(self.data_dir, exist_ok=True)
         if not csv_filename:
             ts = time.strftime("%Y%m%d_%H%M%S")
-            csv_filename = f"q1_env200_{ts}.csv"
+            csv_filename = f"recent_{ts}.csv"
         self.csv_path = os.path.join(self.data_dir, csv_filename)
         self.csv_file = None
         self.csv_writer = None

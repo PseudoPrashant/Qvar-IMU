@@ -65,16 +65,16 @@ static inline int32_t qvar_envelope_extractor_update(qvar_envelope_extractor_t *
 #define QUIET_BLOCK_SPREAD_MAX    1500u   /* LSB - Maximum spread for a block to be considered quiet */
 #define BASELINE_MAX_STEP_PER_BLOCK 175.0f /* LSB - Slew rate limit per block */
 
-#define CALIB_LOWER_OFFSET        800L    /* Base margin above baseline noise floor */
+#define CALIB_LOWER_OFFSET        500L    /* Base margin above baseline noise floor */
 #define CALIB_LOWER_BUFFER        200L    /* Dedicated noise headroom buffer against AC hum beating */
 #define CALIB_LOWER_RATIO         0.28f   /* Adaptive proportional scaling of lower threshold */
-#define CALIB_BAND_OFFSET         2000L   /* Base headroom between lower threshold and ceiling */
+#define CALIB_BAND_OFFSET         4000L   /* Base headroom (x) between lower threshold and ceiling */
 #define CALIB_BAND_RATIO          0.25f   /* Proportional scaling of ceiling band */
-#define CALIB_MIN_LOWER_TH        1200L   /* Safety clamp floor for lower threshold */
-#define CALIB_MAX_UPPER_CEIL      15000L  /* Safety clamp ceiling */
+#define CALIB_MIN_LOWER_TH        1000L   /* Safety clamp floor for lower threshold */
+#define CALIB_MAX_UPPER_CEIL      10000L  /* Safety clamp ceiling */
 
 #define TAP_BRIDGE_TIMER_SAMPLES  10u     /* 50 ms bridge timer at 200 Hz */
-#define TAP_MIN_DUR_SAMPLES       5u      /* 25 ms min duration at 200 Hz (captures crisp taps) */
+#define TAP_MIN_DUR_SAMPLES       4u      /* 20 ms min duration at 200 Hz (rejects sharp noise spikes, keeps tap plateaus) */
 #define TAP_MAX_DUR_SAMPLES       60u     /* 300 ms max duration at 200 Hz (rejects holds & slow drift) */
 #define TAP_LOCKOUT_SAMPLES       30u     /* 150 ms lockout cooldown at 200 Hz */
 #define TAP_LED_GPIO              GPIO_NUM_2
