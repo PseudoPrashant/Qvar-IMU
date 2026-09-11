@@ -4,7 +4,11 @@ This repository contains the complete firmware evolution for interfacing an **ES
 
 > 📖 **Comprehensive Master Documentation:**  
 > For the complete architectural guide, physical theory (AN5755), mathematical derivations, rolling auto-calibration models, state machines, hardware schematics, and host tooling, see:  
-> **👉 [FIRMWARE_COMPREHENSIVE_GUIDE.md](documentaton/FIRMWARE_COMPREHENSIVE_GUIDE.md)**
+> **👉 [FIRMWARE_COMPREHENSIVE_GUIDE.md](documentaton/FIRMWARE_COMPREHENSIVE_GUIDE.md)**  
+>  
+> 🔍 **File-by-File Technical Code Reference:**  
+> For an exhaustive, file-by-file breakdown of every C source file, header, CMake configuration, and Python script across all directories, see:  
+> **👉 [FILE_BY_FILE_CODE_REFERENCE.md](documentaton/FILE_BY_FILE_CODE_REFERENCE.md)**
 
 The repository is structured into three main firmware implementations, representing the evolution from modular wearable driver to high-speed raw streaming, and finally to differential dual-pad tap and direction identification:
 
