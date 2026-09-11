@@ -10,6 +10,7 @@
 #include "imu.h"
 #include "imu_internal.h"
 #include "ism330bx_reg.h"
+#include "driver/gpio.h"
 #include <stddef.h>
 #include <stdio.h>
 
@@ -474,52 +475,181 @@ HAL_StatusTypeDef imu_qvar_print_raw(void)
     return HAL_OK;
 }
 
-/* Circular 10-sample moving average FIR filter to cancel 5.0 Hz aliased power line hum (200 ms period at 50 Hz sampling) per ST AN5755 Section 5.1.6 */
-#define QVAR_MA_FILTER_WINDOW 10u
+/* 4-Sample Sliding Window Peak-to-Peak Envelope Extractor:
+ * Activity[n] = max(x[n..n-3]) - min(x[n..n-3])
+ * Spans 4 * 5 ms = 20.0 ms (exactly 1 full period of 50 Hz powerline hum at 200 Hz).
+ * Captures the absolute peak-to-peak amplitude regardless of phase alignment.
+ */
+#define ENVELOPE_WINDOW_SIZE 4u
 
 typedef struct {
-    int16_t buffer[QVAR_MA_FILTER_WINDOW];
-    int32_t sum;
-    uint8_t index;
+    int16_t window[ENVELOPE_WINDOW_SIZE];
     uint8_t count;
-} qvar_ma_filter_t;
+    uint8_t head;
+} qvar_envelope_extractor_t;
 
-static qvar_ma_filter_t sFilterQ1 = {0};
-static qvar_ma_filter_t sFilterQ2 = {0};
+static qvar_envelope_extractor_t sEnvQ1 = {0};
+static qvar_envelope_extractor_t sEnvQ2 = {0};
 
-static void qvar_ma_filter_reset(qvar_ma_filter_t *filt)
+static void qvar_envelope_extractor_reset(qvar_envelope_extractor_t *env)
 {
-    if (filt == NULL)
+    if (env == NULL)
     {
         return;
     }
-    memset(filt->buffer, 0, sizeof(filt->buffer));
-    filt->sum = 0;
-    filt->index = 0u;
-    filt->count = 0u;
+    memset(env->window, 0, sizeof(env->window));
+    env->count = 0u;
+    env->head = 0u;
 }
 
-static int16_t qvar_ma_filter_apply(qvar_ma_filter_t *filt, int16_t sample)
+static int32_t qvar_envelope_extractor_update(qvar_envelope_extractor_t *env, int16_t sample)
 {
-    if (filt == NULL)
+    if (env == NULL)
     {
-        return sample;
+        return 0;
+    }
+    env->window[env->head] = sample;
+    env->head = (env->head + 1u) % ENVELOPE_WINDOW_SIZE;
+    if (env->count < ENVELOPE_WINDOW_SIZE)
+    {
+        env->count++;
     }
 
-    if (filt->count < QVAR_MA_FILTER_WINDOW)
+    int16_t min_val = env->window[0];
+    int16_t max_val = env->window[0];
+    for (uint8_t i = 1u; i < env->count; i++)
     {
-        filt->buffer[filt->index] = sample;
-        filt->sum += (int32_t)sample;
-        filt->count++;
-        filt->index = (filt->index + 1u) % QVAR_MA_FILTER_WINDOW;
-        return (int16_t)(filt->sum / (int32_t)filt->count);
+        if (env->window[i] < min_val) min_val = env->window[i];
+        if (env->window[i] > max_val) max_val = env->window[i];
+    }
+    return (int32_t)max_val - (int32_t)min_val;
+}
+
+/* Time-Gated Band-Pass State Machine Tap Detection Engine */
+typedef enum {
+    TAP_STATE_IDLE = 0,
+    TAP_STATE_EVENT,
+    TAP_STATE_LOCKOUT
+} tap_state_t;
+
+typedef struct {
+    tap_state_t state;
+    uint8_t in_event;
+    uint8_t event_valid;
+    uint32_t start_idx;
+    uint32_t last_above_idx;
+    int32_t peak_act;
+    uint16_t below_counter;
+    uint16_t lockout_timer;
+    uint32_t tap_count;
+    uint32_t last_tap_dur_ms;
+} robust_tap_detector_t;
+
+static robust_tap_detector_t sRobustTapDetector = {0};
+static uint32_t sTapSampleIndex = 0u;
+
+#define TAP_LED_GPIO              GPIO_NUM_2
+#define TAP_LED_PULSE_SAMPLES     30u  /* 150 ms @ 200 Hz */
+
+static uint16_t sLedTimer = 0u;
+static uint8_t sLedInitialized = 0u;
+
+static void tap_led_init(void)
+{
+    if (sLedInitialized == 0u) {
+        gpio_reset_pin(TAP_LED_GPIO);
+        gpio_set_direction(TAP_LED_GPIO, GPIO_MODE_OUTPUT);
+        gpio_set_level(TAP_LED_GPIO, 0);
+        sLedInitialized = 1u;
+    }
+}
+
+static void robust_tap_detector_reset(robust_tap_detector_t *det)
+{
+    if (det == NULL) return;
+    det->state = TAP_STATE_IDLE;
+    det->in_event = 0u;
+    det->event_valid = 0u;
+    det->start_idx = 0u;
+    det->last_above_idx = 0u;
+    det->peak_act = 0;
+    det->below_counter = 0u;
+    det->lockout_timer = 0u;
+    det->last_tap_dur_ms = 0u;
+}
+
+static uint8_t robust_tap_detector_update(robust_tap_detector_t *det,
+                                          uint32_t sample_idx,
+                                          int16_t raw_val,
+                                          int32_t act_val,
+                                          const qvar_app_config_t *cfg)
+{
+    uint8_t tap_confirmed = 0u;
+    if (det == NULL || cfg == NULL) return 0u;
+
+    int32_t lower_th = cfg->tapLowerThresholdRaw ? cfg->tapLowerThresholdRaw : 3500L;
+    int32_t upper_ceil = cfg->tapUpperCeilingRaw ? cfg->tapUpperCeilingRaw : 5500L;
+    uint16_t bridge_samples = cfg->tapBridgeTimerSamples ? cfg->tapBridgeTimerSamples : 10u; /* 50 ms @ 200 Hz */
+    uint16_t min_dur_samples = cfg->tapMinDurationSamples ? cfg->tapMinDurationSamples : 8u; /* 40 ms @ 200 Hz */
+    uint16_t lockout_samples = cfg->tapLockoutSamples ? cfg->tapLockoutSamples : 30u;       /* 150 ms @ 200 Hz */
+
+    /* Enforce post-tap lockout cooldown */
+    if (det->lockout_timer > 0u) {
+        det->lockout_timer--;
+        if (det->lockout_timer == 0u) {
+            det->state = TAP_STATE_IDLE;
+        }
+        return 0u;
     }
 
-    filt->sum -= (int32_t)filt->buffer[filt->index];
-    filt->buffer[filt->index] = sample;
-    filt->sum += (int32_t)sample;
-    filt->index = (filt->index + 1u) % QVAR_MA_FILTER_WINDOW;
-    return (int16_t)(filt->sum / (int32_t)QVAR_MA_FILTER_WINDOW);
+    if (det->in_event == 0u) {
+        if (act_val > lower_th) {
+            det->in_event = 1u;
+            det->event_valid = (act_val <= upper_ceil) ? 1u : 0u;
+            det->start_idx = sample_idx;
+            det->last_above_idx = sample_idx;
+            det->peak_act = act_val;
+            det->below_counter = 0u;
+            det->state = TAP_STATE_EVENT;
+        }
+    } else {
+        /* While event is open */
+        if (act_val > det->peak_act) {
+            det->peak_act = act_val;
+        }
+
+        /* Kill-switch: permanently invalidate event if ceiling breached */
+        if (act_val > upper_ceil) {
+            det->event_valid = 0u;
+        }
+
+        if (act_val > lower_th) {
+            det->below_counter = 0u;
+            det->last_above_idx = sample_idx;
+        } else {
+            det->below_counter++;
+            if (det->below_counter >= bridge_samples) {
+                /* When Activity < lower_th for 50 consecutive ms (10 samples), event is over */
+                uint32_t total_dur_samples = (det->last_above_idx >= det->start_idx) ?
+                                             (det->last_above_idx - det->start_idx + 1u) : 0u;
+
+                if ((det->event_valid != 0u) && (total_dur_samples >= min_dur_samples)) {
+                    det->tap_count++;
+                    det->last_tap_dur_ms = total_dur_samples * 5u; /* 5 ms per sample @ 200 Hz */
+                    tap_confirmed = 1u;
+                    det->lockout_timer = lockout_samples;
+                    det->state = TAP_STATE_LOCKOUT;
+                } else {
+                    det->state = TAP_STATE_IDLE;
+                }
+
+                det->in_event = 0u;
+                det->below_counter = 0u;
+            }
+        }
+    }
+
+    return tap_confirmed;
 }
 
 static int32_t imu_app_qvar_abs_delta(int16_t value, int16_t baseline)
@@ -716,7 +846,7 @@ static void imu_app_qvar_button_process_q1(imu_app_qvar_button_channel_t *channe
                                            uint32_t now_ms,
                                            uint8_t button_allowed)
 {
-    int32_t delta;
+    int32_t delta_curr;
     int32_t delta_p1;
     int16_t v_curr;
     int16_t v_p1;
@@ -758,37 +888,43 @@ static void imu_app_qvar_button_process_q1(imu_app_qvar_button_channel_t *channe
     v_curr = value;
     v_p1 = channel->v_prev1;
     v_p2 = channel->v_prev2;
-    delta = (int32_t)channel->baseline - (int32_t)v_curr;
+    delta_curr = (int32_t)v_curr - (int32_t)channel->baseline;
+    delta_p1 = (int32_t)v_p1 - (int32_t)channel->baseline;
 
-    /* Dynamic baseline tracking when idle (not deep in a plunge) */
-    if (delta < sQvarAppConfig.qvar1ButtonThresholdRaw)
+    /* Dynamic baseline tracking when idle (within +-600 LSB) */
+    if ((delta_curr > -sQvarAppConfig.qvar1ButtonThresholdRaw) &&
+        (delta_curr < sQvarAppConfig.qvar1ButtonThresholdRaw))
     {
         channel->baseline = imu_app_qvar_track_baseline(channel->baseline, v_curr);
     }
 
-    /* Track highest rebound crest between peaks */
-    if (v_curr > channel->rebound_crest)
+    uint8_t is_neg_peak = 0u;
+    uint8_t is_pos_peak = 0u;
+
+    /* Negative plunge peak: local minimum <= -600 LSB */
+    if ((v_p1 <= v_p2) && (v_p1 < v_curr) &&
+        (delta_p1 <= -sQvarAppConfig.qvar1ButtonMinPeakRaw))
     {
-        channel->rebound_crest = v_curr;
+        is_neg_peak = 1u;
+    }
+    /* Positive crest peak: local maximum >= +600 LSB */
+    else if ((v_p1 >= v_p2) && (v_p1 > v_curr) &&
+             (delta_p1 >= sQvarAppConfig.qvar1ButtonMinPeakRaw))
+    {
+        is_pos_peak = 1u;
     }
 
-    delta_p1 = (int32_t)channel->baseline - (int32_t)v_p1;
-
-    /* Plunge peak condition: local minimum (v_p1 <= v_p2 and v_p1 < v_curr) */
-    if ((v_p1 <= v_p2) && (v_p1 < v_curr) &&
-        (delta_p1 >= sQvarAppConfig.qvar1ButtonMinPeakRaw))
+    if ((is_neg_peak != 0u) || (is_pos_peak != 0u))
     {
         uint32_t cand_peak_ms = (now_ms >= sQvarAppConfig.readPeriodMs) ?
             (now_ms - sQvarAppConfig.readPeriodMs) : now_ms;
-        int32_t rebound_lift = (int32_t)channel->rebound_crest - (int32_t)v_p1;
 
-        /* Must satisfy refractory period (>= 70 ms) and rebound lift (>= 1500 LSB) if following a previous peak */
-        if (((cand_peak_ms - channel->last_peak_ms) >= 70u) &&
-            ((channel->last_peak_ms == 0u) || (rebound_lift >= 1500L)))
+        if ((cand_peak_ms - channel->last_peak_ms) >= 70u)
         {
             channel->last_peak_ms = cand_peak_ms;
-            channel->rebound_crest = v_curr;
-            printf("[IMU QVAR] Q1 PEAK (depth=%ld LSB / %.1f mV)\r\n",
+            printf("[IMU QVAR] Q1 PEAK (%s val=%d delta=%+ld LSB / %+.1f mV)\r\n",
+                   (is_neg_peak != 0u) ? "NEG" : "POS",
+                   (int)v_p1,
                    (long)delta_p1,
                    (float)delta_p1 / 78.0f);
         }
@@ -923,8 +1059,10 @@ void imu_qvar_app_task(void)
             sImuAppQvarBaselinePrinted = 0u;
             imu_app_qvar_button_reset(&sImuAppQvarButtonQ1);
             imu_app_qvar_wear_reset(&sImuAppQvarWearQ2);
-            qvar_ma_filter_reset(&sFilterQ1);
-            qvar_ma_filter_reset(&sFilterQ2);
+            qvar_envelope_extractor_reset(&sEnvQ1);
+            qvar_envelope_extractor_reset(&sEnvQ2);
+            robust_tap_detector_reset(&sRobustTapDetector);
+            sTapSampleIndex = 0u;
             printf("[IMU TEST] Qvar polling started q1_button=%u q2_wear=%u\r\n",
                    (config.qvar1Use == IMU_QVAR_USE_BUTTON) ? 1u : 0u,
                    (config.qvar2Use == IMU_QVAR_USE_WEAR) ? 1u : 0u);
@@ -950,14 +1088,18 @@ void imu_qvar_app_task(void)
         return;
     }
 
-    /* Apply 7-sample FIR moving average to eliminate 50 Hz mains hum */
+    int16_t q1_raw_in = raw.qvar1;
+    int32_t q1_act = 0;
+
+    /* Apply 4-sample peak-to-peak envelope extractor */
     if (raw.qvar1Valid != 0u)
     {
-        raw.qvar1 = qvar_ma_filter_apply(&sFilterQ1, raw.qvar1);
+        q1_act = qvar_envelope_extractor_update(&sEnvQ1, raw.qvar1);
+        raw.qvar1 = (int16_t)q1_act;
     }
     if (raw.qvar2Valid != 0u)
     {
-        raw.qvar2 = qvar_ma_filter_apply(&sFilterQ2, raw.qvar2);
+        raw.qvar2 = (int16_t)qvar_envelope_extractor_update(&sEnvQ2, raw.qvar2);
     }
 
     imu_app_qvar_print_raw_sample(&raw);
@@ -973,11 +1115,41 @@ void imu_qvar_app_task(void)
         sImuAppQvarBaselinePrinted = 0u;
         imu_app_qvar_button_reset(&sImuAppQvarButtonQ1);
         imu_app_qvar_wear_reset(&sImuAppQvarWearQ2);
-        qvar_ma_filter_reset(&sFilterQ1);
-        qvar_ma_filter_reset(&sFilterQ2);
+        qvar_envelope_extractor_reset(&sEnvQ1);
+        qvar_envelope_extractor_reset(&sEnvQ2);
+        robust_tap_detector_reset(&sRobustTapDetector);
+        sTapSampleIndex = 0u;
         printf("[IMU QVAR] startup settle done after %lu ms; baseline learning starts now\r\n",
                (unsigned long)sQvarAppConfig.startupSettleMs);
         return;
+    }
+
+    /* Time-Gated Band-Pass State Machine Tap Detector Evaluation */
+    tap_led_init();
+
+    /* Manage non-blocking LED pulse timer */
+    if (sLedTimer > 0u) {
+        sLedTimer--;
+        if (sLedTimer == 0u) {
+            gpio_set_level(TAP_LED_GPIO, 0);
+        }
+    }
+
+    sTapSampleIndex++;
+    if (raw.qvar1Valid != 0u)
+    {
+        if (robust_tap_detector_update(&sRobustTapDetector, sTapSampleIndex, q1_raw_in, q1_act, &sQvarAppConfig))
+        {
+            /* Flash onboard LED for 150 ms */
+            gpio_set_level(TAP_LED_GPIO, 1);
+            sLedTimer = TAP_LED_PULSE_SAMPLES;
+
+            printf("[IMU QVAR] TAP DETECTED #%lu (dur=%lu ms, peak=%ld LSB / %.1f mV)\r\n",
+                   (unsigned long)sRobustTapDetector.tap_count,
+                   (unsigned long)sRobustTapDetector.last_tap_dur_ms,
+                   (long)sRobustTapDetector.peak_act,
+                   (float)sRobustTapDetector.peak_act / 78.0f);
+        }
     }
 
     imu_app_qvar_process_sample(&raw, now_ms);
